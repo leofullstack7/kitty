@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { clearSessionCache, useSession } from "./session";
 
+function money(cop?: number) {
+  const n = Math.max(0, Math.round(cop ?? 0));
+  return `$${n.toLocaleString("es-CO")}`;
+}
+
 export function Navbar({ compact = false }: { compact?: boolean }) {
   const { me, refresh } = useSession();
   const router = useRouter();
@@ -49,12 +54,25 @@ export function Navbar({ compact = false }: { compact?: boolean }) {
           {me ? (
             <>
               {me.role === "USER" && (
-                <Link href="/wallet" prefetch className="glow-btn px-3 py-2 text-[11px] sm:px-5 sm:text-sm">
-                  Comprar orbes
-                  <span className="ml-1 opacity-80">· {me.balance}</span>
+                <Link href="/wallet" prefetch className="glow-btn flex flex-col items-start px-3 py-1.5 leading-tight sm:px-4">
+                  <span className="text-[11px] sm:text-sm">
+                    Comprar orbes <span className="opacity-80">· {me.balance}</span>
+                  </span>
+                  <span className="text-[10px] font-normal tracking-wide opacity-85">
+                    {money(me.investedCop)} cargados · {money(me.spentCop)} gastados
+                  </span>
                 </Link>
               )}
-              {me.role !== "USER" && (
+              {me.role === "KITTY" && (
+                <Link href="/wallet" prefetch className="flex flex-col items-end rounded-2xl border border-orchid/30 px-3 py-1.5 leading-tight hover:bg-white/10">
+                  <span className="text-[11px]">Orbes · {me.balance}</span>
+                  <span className="text-[10px] text-orchid/80">
+                    {money(me.earnedCop)} ganados
+                    {(me.sentCop ?? 0) > 0 ? ` · ${money(me.sentCop)} enviados` : ""}
+                  </span>
+                </Link>
+              )}
+              {me.role === "ADMIN" && (
                 <Link href="/wallet" prefetch className="rounded-full border border-orchid/30 px-3 py-2 text-[11px] hover:bg-white/10">
                   Orbes · {me.balance}
                 </Link>

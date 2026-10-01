@@ -11,9 +11,13 @@ export type Me = {
   balance: number;
   kittySlug?: string | null;
   unread?: number;
+  investedCop?: number;
+  spentCop?: number;
+  earnedCop?: number;
+  sentCop?: number;
 };
 
-const CACHE_KEY = "kitty_me_v1";
+const CACHE_KEY = "kitty_me_v2";
 const CACHE_TTL = 120_000;
 
 const Ctx = createContext<{ me: Me | null; refresh: () => Promise<void>; loading: boolean }>({
