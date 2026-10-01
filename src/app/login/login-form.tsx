@@ -49,7 +49,19 @@ export default function LoginForm() {
         </button>
       </form>
       <p className="mt-4 text-center text-sm text-orchid/70">
-        ¿Aún no tienes cuenta? <Link href="/register" className="text-white underline">Regístrate</Link>
+        User, Kitty o admin: aquí entra cualquiera que ya tenga cuenta.
+      </p>
+      <p className="mt-2 text-center text-sm text-orchid/70">
+        ¿Aún no tienes cuenta de user?{" "}
+        <Link href="/register" className="text-white underline">
+          Crea la tuya
+        </Link>
+      </p>
+      <p className="mt-2 text-center text-sm text-orchid/70">
+        ¿Vienes a ser Kitty?{" "}
+        <Link href="/register/kitty" className="text-white underline">
+          Este es tu registro
+        </Link>
       </p>
     </div>
   );

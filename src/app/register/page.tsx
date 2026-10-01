@@ -50,6 +50,12 @@ export default function RegisterPage() {
       <p className="mt-4 text-center text-sm text-orchid/70">
         ¿Ya tienes cuenta? <Link href="/login" className="text-white underline">Entrar</Link>
       </p>
+      <p className="mt-2 text-center text-sm text-orchid/60">
+        ¿Eres Kitty? Tu alta es otra:{" "}
+        <Link href="/register/kitty" className="text-white underline">
+          registro de la casa
+        </Link>
+      </p>
     </div>
   );
 }
