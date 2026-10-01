@@ -5,7 +5,7 @@ export const revalidate = 10;
 
 export default async function ExplorePage() {
   const kittys = await getKittyCardsCached().catch(() => []);
-  const live = kittys.filter((k) => k.isAvailable).length;
+  const live = kittys.filter((k) => k.isAvailable && !k.busy).length;
 
   return (
     <div className="mx-auto max-w-7xl px-4 pb-24 pt-6">
@@ -24,6 +24,7 @@ export default async function ExplorePage() {
               tagline: k.tagline,
               avatarPath: k.avatarPath,
               isAvailable: k.isAvailable,
+              busy: k.busy,
               featured: k.featured,
               city: k.city,
             }}

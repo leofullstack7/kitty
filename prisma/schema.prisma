@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -44,6 +45,7 @@ model KittyProfile {
   city                   String
   tags                   String
   isAvailable            Boolean   @default(false)
+  busyRoomId             String?
   featured               Boolean   @default(false)
   avatarPath             String
   coverPath              String
@@ -52,12 +54,16 @@ model KittyProfile {
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
-  media     MediaAsset[]
-  proposals Proposal[]
-  bonuses   Bonus[]       @relation("KittyBonuses")
-  calls     CallSession[] @relation("KittyCalls")
+  media           MediaAsset[]
+  proposals       Proposal[]
+  bonuses         Bonus[]       @relation("KittyBonuses")
+  calls           CallSession[] @relation("KittyCalls")
+  guestCalls      CallSession[] @relation("GuestCalls")
+  invitesSent     CallInvite[]  @relation("InviteFrom")
+  invitesReceived CallInvite[]  @relation("InviteTo")
 
   @@index([isAvailable, featured])
+  @@index([busyRoomId])
 }
 
 model MediaAsset {
@@ -123,19 +129,54 @@ model Proposal {
 }
 
 model CallSession {
-  id         String        @id @default(cuid())
-  roomId     String        @unique
-  proposalId String?       @unique
-  proposal   Proposal?     @relation(fields: [proposalId], references: [id])
-  userId     String
-  user       User          @relation("UserCalls", fields: [userId], references: [id], onDelete: Cascade)
-  kittyId    String
-  kitty      KittyProfile  @relation("KittyCalls", fields: [kittyId], references: [id], onDelete: Cascade)
-  status     String        @default("WAITING")
-  startedAt  DateTime?
-  endedAt    DateTime?
-  messages   ChatMessage[]
-  orbeBursts OrbeBurst[]
+  id           String        @id @default(cuid())
+  roomId       String        @unique
+  proposalId   String?       @unique
+  proposal     Proposal?     @relation(fields: [proposalId], references: [id])
+  userId       String
+  user         User          @relation("UserCalls", fields: [userId], references: [id], onDelete: Cascade)
+  kittyId      String
+  kitty        KittyProfile  @relation("KittyCalls", fields: [kittyId], references: [id], onDelete: Cascade)
+  guestKittyId String?
+  guestKitty   KittyProfile? @relation("GuestCalls", fields: [guestKittyId], references: [id])
+  status       String        @default("WAITING")
+  startedAt    DateTime?
+  endedAt      DateTime?
+  messages     ChatMessage[]
+  orbeBursts   OrbeBurst[]
+  invites      CallInvite[]
+  activities   CallActivity[]
+}
+
+model CallInvite {
+  id          String       @id @default(cuid())
+  callId      String
+  call        CallSession  @relation(fields: [callId], references: [id], onDelete: Cascade)
+  fromKittyId String
+  fromKitty   KittyProfile @relation("InviteFrom", fields: [fromKittyId], references: [id])
+  toKittyId   String
+  toKitty     KittyProfile @relation("InviteTo", fields: [toKittyId], references: [id])
+  status      String       @default("PENDING")
+  createdAt   DateTime     @default(now())
+  resolvedAt  DateTime?
+
+  @@index([toKittyId, status])
+}
+
+model CallActivity {
+  id          String      @id @default(cuid())
+  callId      String
+  call        CallSession @relation(fields: [callId], references: [id], onDelete: Cascade)
+  activity    String
+  orbes       Int
+  userPays    Int
+  platformFee Int
+  kittyNet    Int
+  status      String      @default("PENDING")
+  createdAt   DateTime    @default(now())
+  resolvedAt  DateTime?
+
+  @@index([callId, status])
 }
 
 model ChatMessage {

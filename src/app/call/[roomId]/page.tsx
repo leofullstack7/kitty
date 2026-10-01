@@ -11,11 +11,33 @@ export default async function CallPage({ params }: { params: Promise<{ roomId: s
   if (!session) redirect("/login");
   const call = await db.callSession.findUnique({
     where: { roomId },
-    include: { user: true, kitty: { include: { user: true } } },
+    include: {
+      user: true,
+      kitty: { include: { user: true } },
+      guestKitty: { include: { user: true } },
+    },
   });
   if (!call) redirect("/inbox");
-  const allowed = session.sub === call.userId || session.sub === call.kitty.userId || session.role === "ADMIN";
+  const allowed =
+    session.sub === call.userId ||
+    session.sub === call.kitty.userId ||
+    session.sub === call.guestKitty?.userId ||
+    session.role === "ADMIN";
   if (!allowed) redirect("/explore");
-  const peerName = session.sub === call.userId ? call.kitty.user.displayName : call.user.displayName;
-  return <VideoRoom roomId={roomId} peerName={peerName} />;
+
+  const mySeat =
+    session.sub === call.userId ? "USER" : session.sub === call.kitty.userId ? "HOST" : "GUEST";
+
+  return (
+    <VideoRoom
+      roomId={roomId}
+      hostName={call.kitty.user.displayName}
+      guestName={call.guestKitty?.user.displayName ?? null}
+      userName={call.user.displayName}
+      hostUserId={call.kitty.userId}
+      guestUserId={call.guestKitty?.userId ?? null}
+      callerUserId={call.userId}
+      mySeat={mySeat}
+    />
+  );
 }

@@ -7,6 +7,7 @@ import { SessionProvider } from "@/components/session";
 import { OrbField } from "@/components/orb-field";
 import { MobileDock } from "@/components/mobile-dock";
 import { ChunkRecovery } from "@/components/chunk-recovery";
+import { IncomingInvites } from "@/components/incoming-invites";
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <OrbField />
         <SessionProvider>
           <AgeGate />
+          <IncomingInvites />
           <Navbar />
           <main className="relative z-10 pb-24 md:pb-8">{children}</main>
           <MobileDock />

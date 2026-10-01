@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { jwtVerify } from "jose";
 
 const encoder = new TextEncoder();
-const OPEN_API = new Set(["/api/auth/login", "/api/auth/register", "/api/heroes"]);
+const OPEN_API = new Set(["/api/auth/login", "/api/auth/register", "/api/heroes", "/api/geo"]);
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

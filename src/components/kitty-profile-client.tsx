@@ -21,6 +21,7 @@ export function KittyProfileClient({
     ageLabel: string;
     tags: string[];
     isAvailable: boolean;
+    busy?: boolean;
     featured: boolean;
     avatarPath: string;
     coverPath: string;
@@ -99,7 +100,11 @@ export function KittyProfileClient({
         </div>
         <div className="pt-6 md:pt-24">
           <div className="flex flex-wrap items-center gap-3">
-            {kitty.isAvailable ? (
+            {kitty.busy ? (
+              <span className="flex items-center gap-2 text-sm text-amber-300">
+                <span className="busy-dot" /> Ocupada en otra noche
+              </span>
+            ) : kitty.isAvailable ? (
               <span className="flex items-center gap-2 text-sm text-emerald-300">
                 <span className="available-dot" /> Disponible para JOIN
               </span>

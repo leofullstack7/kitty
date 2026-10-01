@@ -33,11 +33,16 @@ export default function InboxPage() {
   }, []);
 
   async function act(id: string, status: "ACCEPTED" | "IGNORED") {
-    await fetch(`/api/proposals/${id}`, {
+    const res = await fetch(`/api/proposals/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
     });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.roomId) {
+      window.location.href = `/call/${data.roomId}`;
+      return;
+    }
     load();
   }
 

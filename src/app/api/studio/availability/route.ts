@@ -9,6 +9,13 @@ export async function PATCH(req: NextRequest) {
   const ctx = await requireRole(["KITTY"]);
   if (!ctx?.user.kittyProfile) return jsonError("No autorizado", 403);
   const { available } = (await req.json().catch(() => ({}))) as { available?: boolean };
+  const kitty = await db.kittyProfile.findUnique({
+    where: { id: ctx.user.kittyProfile.id },
+    select: { busyRoomId: true },
+  });
+  if (available && kitty?.busyRoomId) {
+    return jsonError("Estás en un JOIN. Termina esa noche antes de volver a ponerte disponible.");
+  }
   await db.kittyProfile.update({
     where: { id: ctx.user.kittyProfile.id },
     data: { isAvailable: !!available },

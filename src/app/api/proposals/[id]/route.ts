@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { jsonError, requireRole } from "@/lib/auth";
 import { originAllowed } from "@/lib/security";
 import { ORB_COP_VALUE } from "@/lib/constants";
+import { bustCatalog } from "@/lib/catalog";
+import { kittyIsBusy, markKittyBusy } from "@/lib/occupancy";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!originAllowed(req)) return jsonError("Origen no permitido", 403);
@@ -23,6 +25,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (status === "IGNORED") {
     await db.proposal.update({ where: { id }, data: { status: "IGNORED", resolvedAt: new Date() } });
     return NextResponse.json({ ok: true });
+  }
+
+  if (await kittyIsBusy(proposal.kittyId)) {
+    return jsonError("Ya estás en otra noche. Termínala antes de aceptar otro JOIN.");
   }
 
   const wallet = proposal.user.wallet;
@@ -68,7 +74,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         href: `/call/${roomId}`,
       },
     });
+    await markKittyBusy(tx, proposal.kittyId, roomId);
   });
 
+  bustCatalog();
   return NextResponse.json({ ok: true, roomId });
 }

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const schema = z.object({
-  DATABASE_URL: z.string().min(1).default("file:./dev.db"),
+  DATABASE_URL: z.string().min(1).default("postgresql://postgres:postgres@127.0.0.1:5432/kitty"),
   JWT_SECRET: z.string().min(32).default("build-placeholder-jwt-secret-not-for-runtime"),
   ANTHROPIC_API_KEY: z.string().optional().default(""),
   APP_ORIGIN: z.string().default("http://localhost:3000"),

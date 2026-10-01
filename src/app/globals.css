@@ -226,3 +226,58 @@ a { color: inherit; text-decoration: none; }
 @keyframes kitty-fade-in {
   from { opacity: 0; }
 }
+
+.room-chat {
+  background: linear-gradient(180deg, rgba(18, 8, 28, 0.94), rgba(8, 4, 14, 0.98));
+  border-left: 1px solid rgba(233, 179, 255, 0.1);
+}
+
+.whisper-card {
+  border-radius: 1rem;
+  background: rgba(16, 6, 28, 0.72);
+  border: 1px solid rgba(233, 179, 255, 0.12);
+  padding: 0.7rem 0.85rem;
+}
+
+.whisper-orbe {
+  font-family: var(--font-serif);
+  color: #f3d4ff;
+  letter-spacing: 0.01em;
+}
+
+.propose-pulse {
+  animation: heartbeat 1.6s ease-in-out infinite;
+}
+
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 106, 213, 0.45); }
+  50% { transform: scale(1.05); box-shadow: 0 0 28px 8px rgba(255, 106, 213, 0.28); }
+}
+
+@keyframes orbe-bloom {
+  0% { transform: scale(0.28); opacity: 0; filter: blur(10px); }
+  22% { transform: scale(1.18); opacity: 1; filter: blur(0); }
+  70% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.88) translateY(-8px); opacity: 0; }
+}
+
+.orbe-bloom {
+  animation: orbe-bloom 2.4s cubic-bezier(.2,.8,.2,1) forwards;
+}
+
+@keyframes invite-flash {
+  0%, 100% { background-color: rgba(0, 0, 0, 0.88); }
+  50% { background-color: rgba(88, 12, 64, 0.92); }
+}
+
+.invite-wall {
+  animation: invite-flash 1.4s ease-in-out infinite;
+}
+
+.busy-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #fbbf24;
+  box-shadow: 0 0 12px #fbbf24;
+}

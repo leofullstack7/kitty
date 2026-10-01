@@ -6,6 +6,7 @@ export type KittyCardRow = {
   tagline: string;
   city: string;
   isAvailable: boolean;
+  busy: boolean;
   featured: boolean;
   avatarPath: string;
   displayName: string;
@@ -54,6 +55,7 @@ export function getKittyCardsCached() {
         tagline: true,
         city: true,
         isAvailable: true,
+        busyRoomId: true,
         featured: true,
         avatarPath: true,
         user: { select: { displayName: true } },
@@ -65,7 +67,8 @@ export function getKittyCardsCached() {
       slug: k.slug,
       tagline: k.tagline,
       city: k.city,
-      isAvailable: k.isAvailable,
+      isAvailable: k.isAvailable && !k.busyRoomId,
+      busy: !!k.busyRoomId,
       featured: k.featured,
       avatarPath: k.avatarPath,
       displayName: k.user.displayName,
@@ -86,6 +89,7 @@ export function getKittyBySlugCached(slug: string) {
         ageLabel: true,
         tags: true,
         isAvailable: true,
+        busyRoomId: true,
         featured: true,
         avatarPath: true,
         coverPath: true,

@@ -6,6 +6,7 @@ export type KittyCardData = {
   tagline: string;
   avatarPath: string;
   isAvailable: boolean;
+  busy?: boolean;
   featured?: boolean;
   city: string;
 };
@@ -25,11 +26,15 @@ export function KittyCard({ kitty }: { kitty: KittyCardData }) {
           />
         </picture>
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
-        {kitty.isAvailable && (
+        {kitty.busy ? (
+          <span className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/50 px-3 py-1 text-[11px] uppercase tracking-widest">
+            <span className="busy-dot" /> Ocupada
+          </span>
+        ) : kitty.isAvailable ? (
           <span className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/50 px-3 py-1 text-[11px] uppercase tracking-widest">
             <span className="available-dot" /> En línea
           </span>
-        )}
+        ) : null}
         {kitty.featured && (
           <span className="absolute right-3 top-3 rounded-full bg-magenta px-3 py-1 text-[10px] font-semibold uppercase tracking-widest">
             Ícono

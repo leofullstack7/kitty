@@ -50,16 +50,16 @@ async function main() {
       passwordHash: await bcrypt.hash("NocheVioleta1!", rounds),
       role: "USER",
       displayName: "Invitado",
-      wallet: { create: { balance: 250 } },
+      wallet: { create: { balance: 1_000_000 } },
     },
   });
   await db.orbeTransaction.create({
     data: {
       walletId: (await db.wallet.findUniqueOrThrow({ where: { userId: demoUser.id } })).id,
       type: "PURCHASE",
-      orbes: 250,
-      copValue: 2_500_000,
-      note: "Saldo de bienvenida MVP",
+      orbes: 1_000_000,
+      copValue: 0,
+      note: "Orbes ilimitados de prueba",
     },
   });
 

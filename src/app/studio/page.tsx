@@ -35,21 +35,32 @@ export default function StudioPage() {
 
   async function toggle() {
     const next = !available;
-    await fetch("/api/studio/availability", {
+    const res = await fetch("/api/studio/availability", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ available: next }),
     });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setMsg(data.error ?? "No se pudo cambiar tu estado");
+      return;
+    }
     setAvailable(next);
     await refresh();
   }
 
   async function act(id: string, status: "ACCEPTED" | "IGNORED") {
-    await fetch(`/api/proposals/${id}`, {
+    const res = await fetch(`/api/proposals/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
     });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.roomId) {
+      window.location.href = `/call/${data.roomId}`;
+      return;
+    }
+    if (!res.ok) setMsg(data.error ?? "No se pudo responder el JOIN");
     load();
   }
 

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "prisma generate && tsx scripts/process-media.ts && next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "dev": "node scripts/run.mjs --dev",
     "prod": "node scripts/run.mjs",

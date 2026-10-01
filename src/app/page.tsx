@@ -54,6 +54,7 @@ export default async function HomePage() {
                 tagline: k.tagline,
                 avatarPath: k.avatarPath,
                 isAvailable: k.isAvailable,
+                busy: k.busy,
                 featured: k.featured,
                 city: k.city,
               }}
