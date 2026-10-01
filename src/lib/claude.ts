@@ -1,34 +1,32 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { env } from "./env";
-import { sanitizeText } from "./security";
-
-const BLOCKLIST = [
-  "menor", "niña", "niño", "nazi", "drogas", "coca", "arma", "asesin", "suicidio",
-];
+import { localModerate } from "./moderation";
 
 export async function moderateText(text: string, context: "chat" | "activity" | "bio") {
-  const clean = sanitizeText(text, 1500);
-  const lowered = clean.toLowerCase();
-  if (BLOCKLIST.some((w) => lowered.includes(w))) {
-    return { allowed: false, reason: "Contenido no permitido", rewritten: clean };
+  const local = localModerate(text);
+  if (!local.allowed) return local;
+
+  if (context === "chat" || !env.ANTHROPIC_API_KEY) {
+    return local;
   }
-  if (!env.ANTHROPIC_API_KEY) {
-    return { allowed: true, reason: "local", rewritten: clean };
-  }
+
   try {
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     const res = await client.messages.create({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 200,
+      max_tokens: 120,
       system:
-        "Eres el filtro de integridad de KITTY, una plataforma de videollamadas privadas entre adultos. Rechaza menores, violencia, odio, delitos y datos personales sensibles. Responde SOLO JSON {allowed:boolean, reason:string}.",
-      messages: [{ role: "user", content: `Contexto:${context}\nTexto:${clean}` }],
+        "Filtro de KITTY, videollamadas privadas entre adultos. PERMITE coqueteo, deseo y lenguaje adulto consensuado. SOLO rechaza: menores de 18, no consentimiento, delitos reales, odio. No rechaces por ser erótico o vulgar entre adultos. Responde SOLO JSON {allowed:boolean, reason:string}.",
+      messages: [{ role: "user", content: `Contexto:${context}\nTexto:${local.rewritten}` }],
     });
     const raw = res.content[0]?.type === "text" ? res.content[0].text : "{}";
     const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim()) as { allowed?: boolean; reason?: string };
-    return { allowed: parsed.allowed !== false, reason: parsed.reason ?? "ok", rewritten: clean };
+    if (parsed.allowed === false) {
+      return { allowed: false, reason: parsed.reason ?? "Esa línea no entra a la casa.", rewritten: local.rewritten };
+    }
+    return local;
   } catch {
-    return { allowed: true, reason: "fallback", rewritten: clean };
+    return local;
   }
 }
 
@@ -48,7 +46,7 @@ export async function icebreakersFor(kittyName: string, tags: string[]) {
       messages: [
         {
           role: "user",
-          content: `Genera 3 icebreakers cortos, elegantes y femeninos en español para invitar a ${kittyName} (${tags.join(", ")}) a una videollamada privada. JSON array de strings. Adultos, no explícito.`,
+          content: `Genera 3 icebreakers cortos y elegantes en español para invitar a ${kittyName} (${tags.join(", ")}) a una videollamada privada entre adultos. JSON array de strings. Pueden ser atrevidos. Nunca menores.`,
         },
       ],
     });

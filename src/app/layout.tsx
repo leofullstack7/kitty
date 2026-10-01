@@ -2,12 +2,11 @@ import type { Metadata } from "next";
 import { Cormorant_Garamond, Outfit } from "next/font/google";
 import "./globals.css";
 import { AgeGate } from "@/components/age-gate";
-import { Navbar } from "@/components/navbar";
 import { SessionProvider } from "@/components/session";
 import { OrbField } from "@/components/orb-field";
-import { MobileDock } from "@/components/mobile-dock";
 import { ChunkRecovery } from "@/components/chunk-recovery";
 import { IncomingInvites } from "@/components/incoming-invites";
+import { AppShell } from "@/components/app-shell";
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -38,9 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <SessionProvider>
           <AgeGate />
           <IncomingInvites />
-          <Navbar />
-          <main className="relative z-10 pb-24 md:pb-8">{children}</main>
-          <MobileDock />
+          <AppShell>{children}</AppShell>
         </SessionProvider>
       </body>
     </html>

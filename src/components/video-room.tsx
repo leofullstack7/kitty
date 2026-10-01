@@ -497,10 +497,12 @@ export function VideoRoom({
     </>
   );
 
+  const mobileActions = isUser ? 4 : isHost && !guestName ? 3 : 2;
+
   return (
-    <div className="relative mx-auto grid min-h-[calc(100vh-80px)] max-w-[1400px] md:grid-cols-[1fr_380px]">
-      <div className="relative min-h-[70vh] overflow-hidden bg-black md:min-h-[calc(100vh-80px)]">
-        <div className={`absolute inset-0 ${remotes.length > 1 ? "grid grid-cols-1 md:grid-cols-2" : ""}`}>
+    <div className="relative mx-auto grid h-[calc(100dvh-56px)] max-w-[1400px] overflow-hidden md:h-auto md:min-h-[calc(100vh-80px)] md:grid-cols-[1fr_380px]">
+      <div className="relative h-full min-h-0 overflow-hidden bg-black md:min-h-[calc(100vh-80px)]">
+        <div className={`absolute inset-0 pb-[5.8rem] md:pb-0 ${remotes.length > 1 ? "grid grid-cols-1 md:grid-cols-2" : ""}`}>
           {remotes.length === 0 && (
             <div className="grid h-full place-items-center bg-gradient-to-b from-plum to-void px-6 text-center">
               <div>
@@ -523,7 +525,7 @@ export function VideoRoom({
           autoPlay
           muted
           playsInline
-          className="absolute right-4 top-4 z-10 h-28 w-20 rounded-2xl border border-orchid/40 object-cover shadow-xl md:h-36 md:w-28"
+          className="absolute right-3 top-3 z-10 h-20 w-14 rounded-2xl border border-orchid/40 object-cover shadow-xl md:right-4 md:top-4 md:h-36 md:w-28"
         />
 
         {bloom && (
@@ -536,9 +538,9 @@ export function VideoRoom({
           </div>
         )}
 
-        {camError && <p className="absolute bottom-40 left-4 right-4 z-20 rounded-2xl bg-black/70 p-3 text-sm">{camError}</p>}
+        {camError && <p className="absolute bottom-28 left-3 right-3 z-20 rounded-2xl bg-black/70 p-3 text-sm md:bottom-40">{camError}</p>}
 
-        <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black via-black/70 to-transparent p-3 md:p-5">
+        <div className="absolute inset-x-0 bottom-0 z-20 hidden bg-gradient-to-t from-black via-black/70 to-transparent p-5 md:block">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <p className="text-[10px] uppercase tracking-[0.3em] text-orchid/70">noche privada</p>
@@ -565,18 +567,36 @@ export function VideoRoom({
           </div>
         </div>
 
-        <button
-          type="button"
-          className="absolute bottom-28 right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-magenta shadow-[0_0_24px_#ff6ad5] md:hidden"
-          onClick={() => setChatOpen(true)}
-        >
-          <span className="text-lg">💬</span>
-          {unread > 0 && (
-            <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-black text-[10px]">
-              {unread}
-            </span>
-          )}
-        </button>
+        <div className="call-toolbar absolute inset-x-0 bottom-0 z-30 border-t border-white/10 bg-black/80 px-2 pt-2 md:hidden">
+          <p className="mb-1 truncate px-1 text-center font-serif text-sm text-orchid/80">
+            {hostName}
+            {guestName ? ` · ${guestName}` : ""}
+          </p>
+          <div className={`grid gap-2 ${mobileActions === 4 ? "grid-cols-4" : mobileActions === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+            <button type="button" className="call-action" onClick={() => setChatOpen(true)}>
+              <span>Chat</span>
+              {unread > 0 && <span className="text-[10px] text-magenta">{unread}</span>}
+            </button>
+            {isUser && (
+              <button type="button" className="call-action call-action-main propose-pulse" onClick={() => setProposeOpen(true)}>
+                Proponer
+              </button>
+            )}
+            {isUser && (
+              <a href="/wallet" target="_blank" rel="noreferrer" className="call-action">
+                Orbes
+              </a>
+            )}
+            {isHost && !guestName && (
+              <button type="button" className="call-action" onClick={() => void loadInvitees()}>
+                Invitar
+              </button>
+            )}
+            <button type="button" className="call-action" onClick={askClose}>
+              {isHost ? "Cerrar" : "Salir"}
+            </button>
+          </div>
+        </div>
       </div>
 
       <aside className="room-chat hidden flex-col md:flex">
@@ -598,7 +618,7 @@ export function VideoRoom({
       {chatOpen && (
         <div className="fixed inset-0 z-40 bg-black/55 md:hidden" onClick={() => setChatOpen(false)}>
           <div
-            className="room-chat absolute bottom-0 right-0 flex h-[72vh] w-[min(100%,420px)] flex-col rounded-tl-3xl"
+            className="room-chat absolute inset-x-0 bottom-[5.75rem] flex h-[min(62vh,520px)] flex-col rounded-t-3xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-orchid/15 px-4 py-3">
@@ -616,8 +636,8 @@ export function VideoRoom({
       )}
 
       {proposeOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-4">
-          <div className="glass w-full max-w-lg rounded-3xl p-6">
+        <div className="fixed inset-0 z-50 grid place-items-end overflow-y-auto bg-black/75 p-3 pb-28 md:place-items-center md:p-4 md:pb-4">
+          <div className="glass w-full max-w-lg rounded-3xl p-5 md:p-6">
             <p className="text-[10px] uppercase tracking-[0.3em] text-magenta">solo ella lo ve</p>
             <h3 className="font-serif text-3xl">Proponerle algo a {hostName}</h3>
             <p className="mt-2 text-sm text-orchid/75">

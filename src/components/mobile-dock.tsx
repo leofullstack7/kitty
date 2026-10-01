@@ -22,7 +22,7 @@ export function MobileDock() {
         : [
             ["/explore", "Salón"],
             ["/inbox", "JOIN"],
-            ["/wallet", "Orbes"],
+            ["/wallet", "Comprar"],
           ];
   return (
     <nav className="fixed inset-x-3 bottom-3 z-50 grid grid-cols-3 gap-2 rounded-full border border-orchid/25 bg-black/70 p-2 backdrop-blur-xl md:hidden">
