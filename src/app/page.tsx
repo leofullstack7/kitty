@@ -1,103 +1,109 @@
-import Image from "next/image";
+import { getHeroesCached, getKittyCardsCached } from "@/lib/catalog";
+import { HeroCarousel } from "@/components/hero-carousel";
+import { KittyCard } from "@/components/kitty-card";
+import Link from "next/link";
 
-export default function Home() {
+export const revalidate = 15;
+
+export default async function HomePage() {
+  const [heroes, kittys] = await Promise.all([
+    getHeroesCached().catch(() => []),
+    getKittyCardsCached().catch(() => []),
+  ]);
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className="pb-24">
+      <HeroCarousel heroes={heroes} />
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+      <div className="mt-8 overflow-hidden border-y border-orchid/15 py-3">
+        <div className="marquee-track gap-10 text-xs uppercase tracking-[0.35em] text-orchid/80">
+          {Array.from({ length: 2 }).map((_, n) => (
+            <div key={n} className="flex gap-10 px-6">
+              <span>JOIN ahora · no mañana</span>
+              <span>1 orbe = $10.000</span>
+              <span>AGATTA está viendo quién entra</span>
+              <span>Videollamada privada · 1:1</span>
+              <span>Bonos solo con ella</span>
+              <span>La casa cobra su margen. Tú cobras la noche.</span>
+            </div>
+          ))}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </div>
+
+      <section className="mx-auto mt-14 max-w-7xl px-4">
+        <div className="flex flex-col items-start justify-between gap-4 md:flex-row md:items-end">
+          <div>
+            <p className="text-xs uppercase tracking-[0.4em] text-magenta">El salón</p>
+            <h2 className="font-serif text-4xl md:text-5xl">Ellas no están en un catálogo. Están despiertas.</h2>
+            <p className="mt-3 max-w-xl text-orchid/75">
+              Elige la cara que no puedes dejar de mirar. Ofrece una actividad. Ponle precio en orbes. Si acepta,
+              la habitación se abre. Si ignora, no insistimos: el deseo no se mendiga.
+            </p>
+          </div>
+          <Link href="/explore" prefetch className="glow-btn px-6 py-3 text-sm">
+            Ver todas en vivo
+          </Link>
+        </div>
+        <div className="mt-10 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+          {kittys.map((k) => (
+            <KittyCard
+              key={k.id}
+              kitty={{
+                slug: k.slug,
+                displayName: k.displayName,
+                tagline: k.tagline,
+                avatarPath: k.avatarPath,
+                isAvailable: k.isAvailable,
+                featured: k.featured,
+                city: k.city,
+              }}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="mx-auto mt-20 grid max-w-7xl gap-6 px-4 md:grid-cols-3">
+        {[
+          {
+            t: "1. Encuéntrala",
+            d: "Cards cuadradas, foto real, pulso verde si está disponible. Esto es una red social de presencia, no un directorio muerto.",
+          },
+          {
+            t: "2. Ofrece el JOIN",
+            d: "Tú propones la actividad y los orbes. Ella ve la solicitud en su bandeja. Acepta o ignora. El poder está equilibrado a propósito.",
+          },
+          {
+            t: "3. Entra a la habitación",
+            d: "Videollamada con cámara. En PC, chat tipo streaming a la derecha. En celular, formato transmisión. Los orbes suben como reacciones.",
+          },
+        ].map((x) => (
+          <article key={x.t} className="glass hover-lift rounded-3xl p-6">
+            <h3 className="font-serif text-3xl">{x.t}</h3>
+            <p className="mt-3 text-sm leading-relaxed text-orchid/80">{x.d}</p>
+          </article>
+        ))}
+      </section>
+
+      <section className="mx-auto mt-20 max-w-7xl overflow-hidden rounded-[2rem] px-4">
+        <div className="relative overflow-hidden rounded-[2rem]">
+          <picture>
+            <source media="(max-width: 768px)" srcSet="/media/processed/heroes/orbes-m.webp" />
+            <img src="/media/processed/heroes/orbes-d.webp" alt="Orbes" className="h-80 w-full object-cover md:h-96" loading="lazy" />
+          </picture>
+          <div className="absolute inset-0 bg-void/70" />
+          <div className="absolute inset-0 flex flex-col items-start justify-center p-8 md:p-14">
+            <p className="text-xs uppercase tracking-[0.4em] text-magenta">economía de la casa</p>
+            <h2 className="font-serif text-4xl md:text-5xl">Los orbes no son likes. Son acceso.</h2>
+            <p className="mt-3 max-w-lg text-orchid/80">
+              1 orbe = $10.000 COP. Si le propones 20 a AGATTA, estás poniendo $200.000 sobre la mesa. Ella lo siente.
+              Tú también.
+            </p>
+            <Link href="/register" prefetch className="glow-btn mt-6 px-6 py-3">
+              Crear cuenta y cargar orbes
+            </Link>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

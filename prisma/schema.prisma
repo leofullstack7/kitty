@@ -1,0 +1,221 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  passwordHash String
+  role         String
+  displayName  String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  failedLogins Int       @default(0)
+  lockedUntil  DateTime?
+  lastLoginAt  DateTime?
+  lastLoginIp  String?
+  isActive     Boolean   @default(true)
+
+  kittyProfile      KittyProfile?
+  wallet            Wallet?
+  proposalsSent     Proposal[]      @relation("UserProposals")
+  bonusesReceived   Bonus[]         @relation("UserBonuses")
+  callsAsUser       CallSession[]   @relation("UserCalls")
+  messages          ChatMessage[]
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+
+  @@index([role])
+}
+
+model KittyProfile {
+  id                     String    @id @default(cuid())
+  userId                 String    @unique
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug                   String    @unique
+  tagline                String
+  bio                    String
+  ageLabel               String    @default("25")
+  city                   String
+  tags                   String
+  isAvailable            Boolean   @default(false)
+  featured               Boolean   @default(false)
+  avatarPath             String
+  coverPath              String
+  monthlyBonusBudgetUsed Int       @default(0)
+  monthlyBonusResetAt    DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  media     MediaAsset[]
+  proposals Proposal[]
+  bonuses   Bonus[]       @relation("KittyBonuses")
+  calls     CallSession[] @relation("KittyCalls")
+
+  @@index([isAvailable, featured])
+}
+
+model MediaAsset {
+  id           String   @id @default(cuid())
+  kittyId      String
+  kitty        KittyProfile @relation(fields: [kittyId], references: [id], onDelete: Cascade)
+  type         String
+  originalName String
+  webPath      String
+  mobilePath   String?
+  desktopPath  String?
+  posterPath   String?
+  mime         String
+  bytes        Int
+  width        Int?
+  height       Int?
+  durationMs   Int?
+  processed    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
+model Wallet {
+  id        String            @id @default(cuid())
+  userId    String            @unique
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance   Int               @default(0)
+  updatedAt DateTime          @updatedAt
+  txs       OrbeTransaction[]
+}
+
+model OrbeTransaction {
+  id        String   @id @default(cuid())
+  walletId  String
+  wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  type      String
+  orbes     Int
+  copValue  Int
+  note      String
+  meta      String   @default("{}")
+  createdAt DateTime @default(now())
+}
+
+model Proposal {
+  id          String        @id @default(cuid())
+  userId      String
+  user        User          @relation("UserProposals", fields: [userId], references: [id], onDelete: Cascade)
+  kittyId     String
+  kitty       KittyProfile  @relation(fields: [kittyId], references: [id], onDelete: Cascade)
+  activity    String
+  orbes       Int
+  bonusId     String?
+  bonus       Bonus?        @relation(fields: [bonusId], references: [id])
+  userPays    Int
+  platformFee Int
+  kittyNet    Int
+  status      String        @default("PENDING")
+  createdAt   DateTime      @default(now())
+  resolvedAt  DateTime?
+  call        CallSession?
+
+  @@index([userId, status])
+  @@index([kittyId, status])
+}
+
+model CallSession {
+  id         String        @id @default(cuid())
+  roomId     String        @unique
+  proposalId String?       @unique
+  proposal   Proposal?     @relation(fields: [proposalId], references: [id])
+  userId     String
+  user       User          @relation("UserCalls", fields: [userId], references: [id], onDelete: Cascade)
+  kittyId    String
+  kitty      KittyProfile  @relation("KittyCalls", fields: [kittyId], references: [id], onDelete: Cascade)
+  status     String        @default("WAITING")
+  startedAt  DateTime?
+  endedAt    DateTime?
+  messages   ChatMessage[]
+  orbeBursts OrbeBurst[]
+}
+
+model ChatMessage {
+  id        String      @id @default(cuid())
+  callId    String
+  call      CallSession @relation(fields: [callId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User        @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  body      String
+  flagged   Boolean     @default(false)
+  createdAt DateTime    @default(now())
+}
+
+model OrbeBurst {
+  id        String      @id @default(cuid())
+  callId    String
+  call      CallSession @relation(fields: [callId], references: [id], onDelete: Cascade)
+  orbes     Int
+  activity  String
+  createdAt DateTime    @default(now())
+}
+
+model Bonus {
+  id        String       @id @default(cuid())
+  kittyId   String
+  kitty     KittyProfile @relation("KittyBonuses", fields: [kittyId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User         @relation("UserBonuses", fields: [userId], references: [id], onDelete: Cascade)
+  percent   Int
+  code      String       @unique
+  status    String       @default("ACTIVE")
+  expiresAt DateTime
+  usedAt    DateTime?
+  note      String       @default("")
+  proposals Proposal[]
+  createdAt DateTime     @default(now())
+
+  @@index([userId, kittyId, status])
+}
+
+model HeroBanner {
+  id           String   @id @default(cuid())
+  title        String
+  subtitle     String
+  ctaLabel     String
+  ctaHref      String
+  imageDesktop String
+  imageMobile  String
+  active       Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  href      String   @default("")
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  ip        String
+  meta      String   @default("{}")
+  createdAt DateTime @default(now())
+}
+
+model PlatformSettings {
+  id                 String @id @default("default")
+  commissionRate     Float  @default(0.28)
+  maxBonusPercent    Int    @default(25)
+  autoApproveBelow   Int    @default(15)
+  bonusExpiryHours   Int    @default(72)
+  monthlyBonusCapPct Int    @default(15)
+  orbCopValue        Int    @default(10000)
+}
