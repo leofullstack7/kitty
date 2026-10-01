@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
   if (password.length < 8) return jsonError("La clave tiene que tener mínimo 8 caracteres.");
 
   const slugWanted = handleFrom(parsed.data.slug || wanted);
-  let username = wanted;
+  const username = wanted;
   if (!looksLikeUsername(username)) return jsonError("Usuario: solo letras, números o _");
 
   const userTaken = await db.user.findUnique({ where: { username }, select: { id: true } });
