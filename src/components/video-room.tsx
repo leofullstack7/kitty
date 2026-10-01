@@ -14,6 +14,7 @@ import {
 type Seat = "USER" | "HOST" | "GUEST";
 type Remote = { id: string; name: string; stream: MediaStream };
 type Invitee = { id: string; slug: string; displayName: string; avatarPath: string };
+type MenuTip = { id: string; title: string; orbes: number };
 
 function RemoteTile({ stream, name }: { stream: MediaStream; name: string }) {
   const ref = useRef<HTMLVideoElement>(null);
@@ -79,6 +80,7 @@ export function VideoRoom({
   const [activity, setActivity] = useState("Quédate un rato más cerca");
   const [orbes, setOrbes] = useState(10);
   const [proposeOpen, setProposeOpen] = useState(false);
+  const [menuTips, setMenuTips] = useState<MenuTip[]>([]);
   const [pending, setPending] = useState<ActivityAsk | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [invitees, setInvitees] = useState<Invitee[]>([]);
@@ -124,6 +126,14 @@ export function VideoRoom({
       })
       .catch(() => undefined);
   }, [roomId]);
+
+  useEffect(() => {
+    if (!isUser) return;
+    void fetch(`/api/call/${roomId}/tips`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : { tips: [] }))
+      .then((data) => setMenuTips(data.tips ?? []))
+      .catch(() => undefined);
+  }, [roomId, isUser]);
 
   useEffect(() => {
     if (!me) return;
@@ -360,6 +370,36 @@ export function VideoRoom({
     setNote("");
   }
 
+  async function buyTip(tip: MenuTip) {
+    if (sending) return;
+    setSending(true);
+    showBloom(tip.orbes);
+    const res = await fetch(`/api/call/${roomId}/tips`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tipId: tip.id }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setSending(false);
+    if (!res.ok) {
+      setNote(data.error ?? "No se pudo enviar");
+      return;
+    }
+    channelRef.current?.sendOrbe(tip.orbes, tip.title);
+    pushLine({
+      from: me?.displayName ?? "tú",
+      role: "USER",
+      body: `pidió “${tip.title}” · ${tip.orbes} orbes`,
+      at: Date.now(),
+      kind: "orbe",
+      orbes: tip.orbes,
+      activity: tip.title,
+    });
+    setProposeOpen(false);
+    setNote("");
+    await refresh();
+  }
+
   async function proposeActivity() {
     if (sending) return;
     setSending(true);
@@ -552,7 +592,7 @@ export function VideoRoom({
             <div className="flex flex-wrap gap-2">
               {isUser && (
                 <button className="glow-btn propose-pulse px-5 py-2 text-sm" onClick={() => setProposeOpen(true)}>
-                  Proponer actividad
+                  Su menú
                 </button>
               )}
               {isHost && !guestName && (
@@ -579,7 +619,7 @@ export function VideoRoom({
             </button>
             {isUser && (
               <button type="button" className="call-action call-action-main propose-pulse" onClick={() => setProposeOpen(true)}>
-                Proponer
+                Menú
               </button>
             )}
             {isUser && (
@@ -608,7 +648,7 @@ export function VideoRoom({
         {isUser && (
           <div className="border-b border-orchid/10 px-4 py-3">
             <button className="glow-btn propose-pulse w-full py-3 text-sm" onClick={() => setProposeOpen(true)}>
-              Proponer actividad
+              Su menú
             </button>
           </div>
         )}
@@ -638,8 +678,28 @@ export function VideoRoom({
       {proposeOpen && (
         <div className="fixed inset-0 z-50 grid place-items-end overflow-y-auto bg-black/75 p-3 pb-28 md:place-items-center md:p-4 md:pb-4">
           <div className="glass w-full max-w-lg rounded-3xl p-5 md:p-6">
-            <p className="text-[10px] uppercase tracking-[0.3em] text-magenta">solo ella lo ve</p>
-            <h3 className="font-serif text-3xl">Proponerle algo a {hostName}</h3>
+            <p className="text-[10px] uppercase tracking-[0.3em] text-magenta">su menú</p>
+            <h3 className="font-serif text-3xl">Elige lo que {hostName} ya puso en su carta</h3>
+            <p className="mt-2 text-sm text-orchid/75">
+              Tocas una acción y le das los orbes que ella pidió. Ya dijo que se siente cómoda haciéndolo.
+            </p>
+            <div className="mt-4 max-h-56 space-y-2 overflow-y-auto">
+              {menuTips.length === 0 && <p className="text-sm text-white/50">Todavía no armó su menú.</p>}
+              {menuTips.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  disabled={sending}
+                  className="flex w-full items-center justify-between rounded-2xl border border-orchid/20 px-4 py-3 text-left hover:bg-white/5"
+                  onClick={() => void buyTip(t)}
+                >
+                  <span className="pr-3 font-serif text-lg">{t.title}</span>
+                  <span className="shrink-0 text-sm text-magenta">{t.orbes} orbes</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-5 text-xs uppercase tracking-[0.25em] text-white/40">o propónle algo tuyo</p>
+            <h3 className="font-serif text-2xl">Proponerle algo a {hostName}</h3>
             <p className="mt-2 text-sm text-orchid/75">
               Elige los orbes y escribe qué quieres. No se descuenta nada hasta que ella diga que sí.
             </p>

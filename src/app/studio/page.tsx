@@ -5,25 +5,35 @@ import { useSession } from "@/components/session";
 
 type InboxItem = { id: string; activity: string; orbes: number; status: string; user: { displayName: string; username: string }; roomId?: string | null };
 type UserOpt = { id: string; username: string; displayName: string };
+type TipItem = { id: string; title: string; orbes: number; active: boolean };
 
 export default function StudioPage() {
   const { me, refresh } = useSession();
   const [available, setAvailable] = useState(false);
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [users, setUsers] = useState<UserOpt[]>([]);
+  const [tips, setTips] = useState<TipItem[]>([]);
+  const [tipTitle, setTipTitle] = useState("");
+  const [tipOrbes, setTipOrbes] = useState(10);
   const [userId, setUserId] = useState("");
   const [percent, setPercent] = useState(10);
   const [note, setNote] = useState("Porque tu JOIN mereció una segunda noche");
   const [msg, setMsg] = useState("");
 
   async function load() {
-    const [p, u, meRes] = await Promise.all([fetch("/api/proposals"), fetch("/api/studio/users"), fetch("/api/auth/me")]);
+    const [p, u, meRes, t] = await Promise.all([
+      fetch("/api/proposals"),
+      fetch("/api/studio/users"),
+      fetch("/api/auth/me"),
+      fetch("/api/studio/tips"),
+    ]);
     if (p.ok) setInbox((await p.json()).proposals);
     if (u.ok) setUsers((await u.json()).users);
     if (meRes.ok) {
       const data = await meRes.json();
       setAvailable(!!data.me?.available);
     }
+    if (t.ok) setTips((await t.json()).tips ?? []);
   }
   useEffect(() => {
     load();
@@ -72,6 +82,27 @@ export default function StudioPage() {
     });
     const data = await res.json();
     setMsg(data.error ?? `Bono ${data.bonus?.code ?? ""} listo`);
+  }
+
+  async function addTip() {
+    const res = await fetch("/api/studio/tips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: tipTitle, orbes: tipOrbes }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setMsg(data.error ?? "No se pudo agregar");
+      return;
+    }
+    setTipTitle("");
+    setMsg("Acción agregada a tu menú");
+    load();
+  }
+
+  async function removeTip(id: string) {
+    await fetch(`/api/studio/tips/${id}`, { method: "DELETE" });
+    load();
   }
 
   async function upload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -140,6 +171,33 @@ export default function StudioPage() {
           </button>
         </article>
       </section>
+
+      <article className="glass mt-6 rounded-3xl p-6">
+        <h2 className="font-serif text-3xl">Tu menú de la noche</h2>
+        <p className="mt-2 text-sm text-orchid/70">
+          Pon lo que te sientes cómoda haciendo y cuántos orbes vale. En el privado, el user toca una y te los da.
+        </p>
+        <div className="mt-4 space-y-2">
+          {tips.map((t) => (
+            <div key={t.id} className="flex items-center justify-between gap-3 rounded-2xl border border-orchid/15 px-4 py-3">
+              <div>
+                <p className="font-serif text-xl">{t.title}</p>
+                <p className="text-xs text-magenta">{t.orbes} orbes</p>
+              </div>
+              <button className="text-xs text-orchid/70" onClick={() => void removeTip(t.id)}>
+                Quitar
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-[1fr_120px_auto]">
+          <input className="input-lux" placeholder="Ej. Una confesión lenta" value={tipTitle} onChange={(e) => setTipTitle(e.target.value)} />
+          <input className="input-lux" type="number" min={1} max={200} value={tipOrbes} onChange={(e) => setTipOrbes(Number(e.target.value))} />
+          <button className="glow-btn px-5 py-3" onClick={() => void addTip()}>
+            Agregar
+          </button>
+        </div>
+      </article>
 
       <article className="glass mt-6 rounded-3xl p-6">
         <h2 className="font-serif text-3xl">Subir foto o video</h2>

@@ -61,9 +61,23 @@ model KittyProfile {
   guestCalls      CallSession[] @relation("GuestCalls")
   invitesSent     CallInvite[]  @relation("InviteFrom")
   invitesReceived CallInvite[]  @relation("InviteTo")
+  tips            KittyTip[]
 
   @@index([isAvailable, featured])
   @@index([busyRoomId])
+}
+
+model KittyTip {
+  id        String       @id @default(cuid())
+  kittyId   String
+  kitty     KittyProfile @relation(fields: [kittyId], references: [id], onDelete: Cascade)
+  title     String
+  orbes     Int
+  active    Boolean      @default(true)
+  sortOrder Int          @default(0)
+  createdAt DateTime     @default(now())
+
+  @@index([kittyId, active])
 }
 
 model MediaAsset {

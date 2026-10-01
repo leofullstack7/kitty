@@ -93,6 +93,11 @@ export function getKittyBySlugCached(slug: string) {
         featured: true,
         avatarPath: true,
         coverPath: true,
+        tips: {
+          where: { active: true },
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+          select: { id: true, title: true, orbes: true },
+        },
         user: { select: { displayName: true } },
         media: {
           orderBy: { createdAt: "desc" },

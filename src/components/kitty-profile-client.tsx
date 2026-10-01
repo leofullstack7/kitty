@@ -7,6 +7,7 @@ import { useSession } from "./session";
 
 type Media = { id: string; type: string; webPath: string; mobilePath: string | null; desktopPath: string | null; posterPath: string | null };
 type Bonus = { id: string; percent: number; code: string; expiresAt: string };
+type Tip = { id: string; title: string; orbes: number };
 
 export function KittyProfileClient({
   kitty,
@@ -26,18 +27,33 @@ export function KittyProfileClient({
     avatarPath: string;
     coverPath: string;
     media: Media[];
+    tips?: Tip[];
   };
 }) {
   const { me } = useSession();
   const router = useRouter();
   const canJoin = me?.role === "USER";
   const [bonuses, setBonuses] = useState<Bonus[]>([]);
+  const [tips, setTips] = useState<Tip[]>(kitty.tips ?? []);
   const [open, setOpen] = useState(false);
   const [activity, setActivity] = useState(ACTIVITY_SUGGESTIONS[0]!);
   const [orbes, setOrbes] = useState(20);
   const [bonusId, setBonusId] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/tips?kittyId=${encodeURIComponent(kitty.id)}`)
+      .then((res) => (res.ok ? res.json() : { tips: [] }))
+      .then((data) => {
+        if (!cancelled) setTips((data.tips ?? []) as Tip[]);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [kitty.id]);
 
   useEffect(() => {
     if (!canJoin) {
@@ -140,6 +156,24 @@ export function KittyProfileClient({
           )}
         </div>
       </div>
+
+      {tips.length > 0 && (
+        <section className="mt-16">
+          <p className="text-[10px] uppercase tracking-[0.35em] text-magenta">su menú</p>
+          <h2 className="font-serif text-3xl">Lo que le gusta hacer · y lo que vale</h2>
+          <p className="mt-2 max-w-2xl text-sm text-orchid/70">
+            Ella armó esta carta. En el privado tocas una acción y le das los orbes que pidió.
+          </p>
+          <div className="mt-6 grid gap-3 md:grid-cols-2">
+            {tips.map((t) => (
+              <div key={t.id} className="glass flex items-center justify-between rounded-2xl px-5 py-4">
+                <p className="pr-4 font-serif text-xl">{t.title}</p>
+                <p className="shrink-0 text-sm text-magenta">{t.orbes} orbes</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <h2 className="mt-16 font-serif text-3xl">Su galería</h2>
       <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-3">

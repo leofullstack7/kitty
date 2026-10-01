@@ -35,6 +35,7 @@ export default async function KittyPage({ params }: { params: Promise<{ slug: st
         avatarPath: kitty.avatarPath,
         coverPath: kitty.coverPath,
         media: kitty.media,
+        tips: kitty.tips ?? [],
       }}
     />
   );
