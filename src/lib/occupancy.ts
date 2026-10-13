@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { bustCatalog } from "./catalog";
-import { PREVIEW_CONNECT_SECONDS, PREVIEW_DECIDE_SECONDS, TIME_EXTEND_MARK } from "./constants";
+import { PREVIEW_SECONDS } from "./constants";
 
 type Tx = {
   kittyProfile: typeof db.kittyProfile;
@@ -10,8 +10,7 @@ type Tx = {
 };
 
 const PRESENCE_TTL_MS = 40_000;
-const JOIN_GRACE_MS = 75_000;
-const ABANDON_MS = 45 * 60_000;
+const ABANDON_MS = 6 * 60 * 60_000;
 let lastSweepAt = 0;
 
 function isFresh(at: Date | null | undefined, ttl = PRESENCE_TTL_MS) {
@@ -37,17 +36,6 @@ type CallOccupancy = {
   messages: { createdAt: Date }[];
   activities: { status: string; activity: string }[];
 };
-
-function guestIsPresent(call: CallOccupancy) {
-  if (!call.guestKittyId) return false;
-  if (isFresh(call.guestSeenAt)) return true;
-  return call.invites.some(
-    (i) =>
-      i.toKittyId === call.guestKittyId &&
-      i.status === "ACCEPTED" &&
-      isFresh(i.resolvedAt, JOIN_GRACE_MS),
-  );
-}
 
 function lastActivityAt(call: CallOccupancy) {
   const times = [
@@ -117,55 +105,19 @@ async function endAbandonedCall(call: CallOccupancy) {
   bustCatalog();
 }
 
-function callTimeExpired(call: CallOccupancy) {
-  const now = Date.now();
-  if (call.phase === "PREVIEW" && !call.endsAt) {
-    const waitingSince = call.startedAt?.getTime() ?? 0;
-    if (waitingSince && now - waitingSince > PREVIEW_CONNECT_SECONDS * 1000) return true;
-    if (now - call.createdAt.getTime() > 120_000) return true;
-    return false;
-  }
-  if (!call.endsAt) return false;
-  const due = call.endsAt.getTime();
-  if (call.phase === "PREVIEW") return now > due + PREVIEW_DECIDE_SECONDS * 1000;
-  const waitingTime = call.activities.some((a) => a.status === "PENDING" && a.activity === TIME_EXTEND_MARK);
-  if (waitingTime) return now > due + 45_000;
-  return now > due;
-}
-
 export async function reconcileCallByRoom(roomId: string, opts?: { abandon?: boolean }) {
   const call = await loadOccupancy(roomId);
   if (!call || call.status === "ENDED") return call;
+  if (opts?.abandon === false) return call;
 
-  if (callTimeExpired(call)) {
-    await endAbandonedCall(call);
-    return { ...call, status: "ENDED", guestKittyId: null as string | null };
-  }
-
-  let droppedGuest = false;
-  if (call.guestKittyId && !guestIsPresent(call)) {
-    await db.$transaction(async (tx) => {
-      await dropGuestFromCall(tx, call);
-    });
-    droppedGuest = true;
-    call.guestKittyId = null;
-    call.guestSeenAt = null;
-  }
-
-  const shouldAbandon = opts?.abandon !== false;
-  const abandoned =
-    shouldAbandon &&
-    !isFresh(call.hostSeenAt) &&
-    !isFresh(call.userSeenAt) &&
+  const quiet =
+    !isFresh(call.hostSeenAt, ABANDON_MS) &&
+    !isFresh(call.userSeenAt, ABANDON_MS) &&
     Date.now() - lastActivityAt(call).getTime() > ABANDON_MS;
+  if (!quiet) return call;
 
-  if (abandoned) {
-    await endAbandonedCall(call);
-    return { ...call, status: "ENDED", guestKittyId: null as string | null };
-  }
-
-  if (droppedGuest) bustCatalog();
-  return call;
+  await endAbandonedCall(call);
+  return { ...call, status: "ENDED", guestKittyId: null as string | null };
 }
 
 export async function sweepStaleOccupancy() {
@@ -177,7 +129,7 @@ export async function sweepStaleOccupancy() {
     take: 80,
   });
   for (const row of live) {
-    await reconcileCallByRoom(row.roomId, { abandon: false });
+    await reconcileCallByRoom(row.roomId);
   }
 
   const busy = await db.kittyProfile.findMany({
@@ -219,10 +171,17 @@ export async function touchCallPresence(roomId: string, userId: string) {
     const nextHost = userId === call.kitty.userId ? now : call.hostSeenAt;
     const nextUser = userId === call.userId ? now : call.userSeenAt;
     const bothHere = !!(nextHost && nextUser);
-    const pairNow = call.phase === "PREVIEW" && !call.startedAt && bothHere;
+    const startPreview = call.phase === "PREVIEW" && !call.endsAt && bothHere;
     await db.callSession.update({
       where: { id: call.id },
-      data: pairNow ? { ...data, startedAt: now } : data,
+      data: startPreview
+        ? {
+            ...data,
+            startedAt: call.startedAt ?? now,
+            endsAt: new Date(now.getTime() + PREVIEW_SECONDS * 1000),
+            status: "LIVE",
+          }
+        : data,
     });
   }
 

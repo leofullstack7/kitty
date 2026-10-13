@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
   if (!body?.data || typeof body.data !== "object") return jsonError("Señal inválida");
 
   const payload = JSON.stringify(body.data);
-  if (payload.length > 12_000) return jsonError("Señal demasiado grande");
+  if (payload.length > 100_000) return jsonError("Señal demasiado grande");
 
   await db.callSignal.create({
     data: {
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
   });
 
   await db.callSignal.deleteMany({
-    where: { callId: call.id, createdAt: { lt: new Date(Date.now() - 90_000) } },
+    where: { callId: call.id, createdAt: { lt: new Date(Date.now() - 3 * 60_000) } },
   });
 
   return NextResponse.json({ ok: true });
@@ -67,7 +67,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
       createdAt: { gte: afterAt },
     },
     orderBy: { createdAt: "asc" },
-    take: 80,
+    take: 200,
   });
 
   return NextResponse.json({

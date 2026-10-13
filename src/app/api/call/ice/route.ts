@@ -40,6 +40,16 @@ const FREE_TURN: RTCIceServer[] = [
     username: "free",
     credential: "free",
   },
+  {
+    urls: [
+      "turn:openrelay.metered.ca:80",
+      "turn:openrelay.metered.ca:443",
+      "turn:openrelay.metered.ca:443?transport=tcp",
+      "turns:openrelay.metered.ca:443",
+    ],
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
 ];
 
 export async function GET() {

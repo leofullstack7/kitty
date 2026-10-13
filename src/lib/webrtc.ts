@@ -46,7 +46,7 @@ export function defaultIceServers(): RTCIceServer[] {
 export function rtcConfig(iceServers: RTCIceServer[]): RTCConfiguration {
   return {
     iceServers: iceServers.length ? iceServers : PUBLIC_STUN,
-    iceCandidatePoolSize: 0,
+    iceCandidatePoolSize: 4,
     bundlePolicy: "max-bundle",
     rtcpMuxPolicy: "require",
     iceTransportPolicy: "all",
@@ -155,14 +155,24 @@ export function isLiveIce(state: RTCIceConnectionState | RTCPeerConnectionState)
 export function shouldOffer(pc: RTCPeerConnection, checkingForMs = 0) {
   if (pc.signalingState !== "stable") return false;
   if (isLiveIce(pc.iceConnectionState) || isLiveIce(pc.connectionState)) return false;
-  if (pc.iceConnectionState === "checking" && checkingForMs < 8_000) return false;
+  if (pc.remoteDescription) {
+    const dead =
+      pc.iceConnectionState === "failed" ||
+      pc.connectionState === "failed" ||
+      pc.iceConnectionState === "disconnected";
+    return dead && checkingForMs > 10_000;
+  }
+  if (pc.localDescription) return checkingForMs > 8_000;
+  if (pc.iceConnectionState === "checking" && checkingForMs < 10_000) return false;
   return true;
 }
 
 export function isStuckPeer(pc: RTCPeerConnection, ageMs: number) {
   if (isLiveIce(pc.iceConnectionState) || isLiveIce(pc.connectionState)) return false;
-  if (pc.connectionState === "failed" || pc.iceConnectionState === "failed") return ageMs > 2_000;
-  return ageMs > 12_000 && (pc.connectionState === "new" || pc.connectionState === "connecting" || pc.iceConnectionState === "checking");
+  if (pc.connectionState === "closed") return true;
+  if (pc.connectionState === "failed" || pc.iceConnectionState === "failed") return ageMs > 8_000;
+  if (pc.remoteDescription || pc.localDescription) return false;
+  return ageMs > 20_000;
 }
 
 export type CallDevices = {

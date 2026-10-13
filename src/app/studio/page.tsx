@@ -2,8 +2,19 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "@/components/session";
+import { CallRejoin, canRejoin } from "@/components/call-rejoin";
 
-type InboxItem = { id: string; activity: string; orbes: number; status: string; user: { displayName: string; username: string }; roomId?: string | null };
+type InboxItem = {
+  id: string;
+  activity: string;
+  orbes: number;
+  status: string;
+  user: { displayName: string; username: string };
+  roomId?: string | null;
+  phase?: string | null;
+  endsAt?: string | null;
+  callStatus?: string | null;
+};
 type UserOpt = { id: string; username: string; displayName: string };
 type TipItem = { id: string; title: string; orbes: number; active: boolean };
 
@@ -143,9 +154,7 @@ export default function StudioPage() {
                     <button className="text-xs" onClick={() => act(p.id, "IGNORED")}>Ignorar</button>
                   </div>
                 )}
-                {p.status === "ACCEPTED" && p.roomId && (
-                  <a className="mt-2 inline-block text-xs text-magenta" href={`/call/${p.roomId}`}>Entrar</a>
-                )}
+                {canRejoin(p) && p.roomId && <CallRejoin roomId={p.roomId} phase={p.phase} endsAt={p.endsAt} />}
               </div>
             ))}
           </div>

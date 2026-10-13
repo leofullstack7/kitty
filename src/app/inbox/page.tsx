@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useSession } from "@/components/session";
+import { CallRejoin, canRejoin } from "@/components/call-rejoin";
 
 type Proposal = {
   id: string;
@@ -12,6 +12,9 @@ type Proposal = {
   status: string;
   createdAt: string;
   roomId?: string | null;
+  phase?: string | null;
+  endsAt?: string | null;
+  callStatus?: string | null;
   kitty: { displayName: string; slug: string };
   user: { displayName: string };
 };
@@ -78,11 +81,7 @@ export default function InboxPage() {
                   </button>
                 </>
               )}
-              {p.status === "ACCEPTED" && p.roomId && (
-                <Link href={`/call/${p.roomId}`} className="glow-btn px-5 py-2 text-sm">
-                  Entrar a la videollamada
-                </Link>
-              )}
+              {canRejoin(p) && p.roomId && <CallRejoin roomId={p.roomId} phase={p.phase} endsAt={p.endsAt} />}
             </div>
           </article>
         ))}

@@ -25,6 +25,7 @@ import {
   syncPeerTracks,
 } from "@/lib/webrtc";
 import type { SignalData } from "@/lib/call-channel";
+import { armCallBackground, dropHeld, holdCall, signalKey, takeHeld } from "@/lib/call-persist";
 
 type Seat = "USER" | "HOST" | "GUEST";
 type Remote = { id: string; name: string; stream: MediaStream };
@@ -161,6 +162,10 @@ export function VideoRoom({
   guestUserIdRef.current = guestUserId;
   const guestNameRef = useRef(guestNameProp);
   guestNameRef.current = guestName;
+  const hostUserIdRef = useRef(hostUserId);
+  hostUserIdRef.current = hostUserId;
+  const callerUserIdRef = useRef(callerUserId);
+  callerUserIdRef.current = callerUserId;
 
   const isUser = mySeat === "USER";
   const isHost = mySeat === "HOST";
@@ -232,11 +237,22 @@ export function VideoRoom({
         setJoiningName(null);
       }
     }
+    function pingHidden() {
+      void fetch(`/api/call/${roomId}/presence`, { method: "POST", credentials: "include", keepalive: true });
+    }
+    function onVisibility() {
+      if (document.visibilityState === "hidden") pingHidden();
+      else void beat();
+    }
     void beat();
     const t = window.setInterval(() => void beat(), 4000);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", pingHidden);
     return () => {
       stop = true;
       window.clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", pingHidden);
     };
   }, [roomId, mySeat, router]);
 
@@ -324,17 +340,35 @@ export function VideoRoom({
         .catch(() => undefined);
     }
 
-    async function ensurePeer(peerId: string, force = false) {
-      if (!peerId || peerId === user.id || !streamRef.current) return;
-      const existing = peersRef.current.get(peerId);
-      const age = Date.now() - (peerBornRef.current.get(peerId) ?? Date.now());
-      if (existing && !force && !isStuckPeer(existing, age) && existing.connectionState !== "closed" && existing.connectionState !== "failed") {
+    function knownPeerIds() {
+      return [...new Set([hostUserIdRef.current, callerUserIdRef.current, guestUserIdRef.current].filter((id): id is string => !!id && id !== user.id))];
+    }
+
+    function parkNow() {
+      if (!streamRef.current) return;
+      if (closingRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        peersRef.current.forEach((pc) => pc.close());
+        peersRef.current.clear();
+        channelRef.current?.disconnect();
+        channelRef.current = null;
         return;
       }
-      existing?.close();
-      const pc = new RTCPeerConnection(rtcConfig(iceServersRef.current));
-      streamRef.current.getTracks().forEach((t) => pc.addTrack(t, streamRef.current!));
-      await applySendQuality(pc, Math.max(1, peersRef.current.size + 1), qualityRungRef.current);
+      channelRef.current?.disconnect();
+      channelRef.current = null;
+      holdCall({
+        roomId,
+        userId: user.id,
+        stream: streamRef.current,
+        peers: peersRef.current,
+        pendingIce: pendingIceRef.current,
+        peerBorn: peerBornRef.current,
+        seenSignals: seenSignalsRef.current,
+        iceServers: iceServersRef.current,
+      });
+    }
+
+    function wirePeer(peerId: string, pc: RTCPeerConnection) {
       pc.ontrack = (ev) => {
         const remote = ev.streams[0] ?? new MediaStream(ev.track ? [ev.track] : []);
         if (remote.getTracks().length) {
@@ -350,16 +384,30 @@ export function VideoRoom({
           missingPeersRef.current.delete(peerId);
           markMediaReady();
           void applySendQuality(pc, Math.max(1, peersRef.current.size), qualityRungRef.current);
+          if (!unmounted) setLinkHint("");
+          return;
         }
-        if (pc.iceConnectionState === "disconnected") {
-          window.setTimeout(() => {
-            if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
-              void restartIce(peerId);
-            }
-          }, 2500);
-        }
-        if (pc.iceConnectionState === "failed") void restartIce(peerId);
+        if (document.visibilityState === "hidden") return;
+        if (pc.iceConnectionState !== "failed" && pc.iceConnectionState !== "disconnected") return;
+        window.setTimeout(() => {
+          if (peersRef.current.get(peerId) !== pc || document.visibilityState === "hidden") return;
+          if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") void restartIce(peerId);
+        }, 8_000);
       };
+    }
+
+    async function ensurePeer(peerId: string, force = false) {
+      if (!peerId || peerId === user.id || !streamRef.current) return;
+      const existing = peersRef.current.get(peerId);
+      const age = Date.now() - (peerBornRef.current.get(peerId) ?? Date.now());
+      if (existing && !force && !isStuckPeer(existing, age) && existing.connectionState !== "closed" && existing.connectionState !== "failed") {
+        return;
+      }
+      existing?.close();
+      const pc = new RTCPeerConnection(rtcConfig(iceServersRef.current));
+      streamRef.current.getTracks().forEach((t) => pc.addTrack(t, streamRef.current!));
+      await applySendQuality(pc, Math.max(1, peersRef.current.size + 1), qualityRungRef.current);
+      wirePeer(peerId, pc);
       peersRef.current.set(peerId, pc);
       peerBornRef.current.set(peerId, Date.now());
     }
@@ -382,7 +430,7 @@ export function VideoRoom({
       if (!pc || user.id > peerId || !shouldOffer(pc, age) || makingOfferRef.current.has(peerId)) return;
       makingOfferRef.current.add(peerId);
       try {
-        const offer = await pc.createOffer();
+        const offer = await pc.createOffer(pc.remoteDescription ? { iceRestart: true } : undefined);
         if (pc.signalingState !== "stable") return;
         await pc.setLocalDescription(offer);
         sendSignal({ sdp: offer }, peerId);
@@ -393,56 +441,116 @@ export function VideoRoom({
       }
     }
 
+    const lastResend = new Map<string, number>();
+    function resendLocal(peerId: string) {
+      const pc = peersRef.current.get(peerId);
+      if (!pc || user.id > peerId) return;
+      if (pc.signalingState !== "have-local-offer" || !pc.localDescription) return;
+      const now = Date.now();
+      if (now - (lastResend.get(peerId) ?? 0) < 8_000) return;
+      lastResend.set(peerId, now);
+      sendSignal({ sdp: pc.localDescription.toJSON() }, peerId);
+    }
+
     async function handleSignal(data: SignalData, from: string) {
       if (!from || from === user.id) return;
-      const key = data.sdp
-        ? `${from}:sdp:${data.sdp.type}:${(data.sdp.sdp ?? "").slice(0, 96)}`
-        : `${from}:ice:${data.candidate?.candidate ?? ""}`;
+      const key = signalKey(from, data);
       if (seenSignalsRef.current.has(key)) return;
-      seenSignalsRef.current.add(key);
       await ensurePeer(from);
-      const pc = peersRef.current.get(from);
+      let pc = peersRef.current.get(from);
       if (!pc) return;
       const polite = user.id > from;
-      if (data.sdp) {
-        const offerCollision = data.sdp.type === "offer" && (makingOfferRef.current.has(from) || pc.signalingState !== "stable");
-        if (offerCollision) {
-          if (!polite) return;
-          try {
-            await pc.setLocalDescription({ type: "rollback" });
-          } catch {
-            /* Safari no siempre hace rollback */
+      try {
+        if (data.sdp) {
+          const collision = data.sdp.type === "offer" && (makingOfferRef.current.has(from) || pc.signalingState !== "stable");
+          if (collision && !polite) {
+            seenSignalsRef.current.add(key);
+            return;
           }
-        }
-        try {
+          if (collision && polite) {
+            try {
+              await pc.setLocalDescription({ type: "rollback" });
+            } catch {
+              await ensurePeer(from, true);
+              pc = peersRef.current.get(from);
+              if (!pc) return;
+            }
+          }
           await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
           await flushIce(from, pc);
-        } catch {
-          return;
+          if (data.sdp.type === "offer") {
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            sendSignal({ sdp: answer }, from);
+          }
         }
-        if (data.sdp.type === "offer") {
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          sendSignal({ sdp: answer }, from);
+        if (data.candidate) {
+          pc = peersRef.current.get(from) ?? pc;
+          if (!pc.remoteDescription) {
+            const q = pendingIceRef.current.get(from) ?? [];
+            q.push(data.candidate);
+            pendingIceRef.current.set(from, q);
+          } else {
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+          }
         }
+        seenSignalsRef.current.add(key);
+      } catch {
+        seenSignalsRef.current.delete(key);
       }
-      if (data.candidate) {
-        if (!pc.remoteDescription) {
-          const q = pendingIceRef.current.get(from) ?? [];
-          q.push(data.candidate);
-          pendingIceRef.current.set(from, q);
+    }
+
+    let retriedMute = false;
+    async function healMedia() {
+      if (unmounted || document.visibilityState === "hidden") return;
+      const stream = streamRef.current;
+      if (!stream) return;
+      const video = stream.getVideoTracks()[0];
+      const audio = stream.getAudioTracks()[0];
+      const ended = !video || video.readyState === "ended" || !audio || audio.readyState === "ended";
+      if (!ended) {
+        peersRef.current.forEach((pc, id) => {
+          if (pc.iceConnectionState === "failed" || pc.connectionState === "failed" || pc.iceConnectionState === "disconnected") {
+            void restartIce(id);
+          }
+        });
+        if (video?.muted && video.enabled && !retriedMute) {
+          retriedMute = true;
+          window.setTimeout(() => {
+            if (video.readyState === "live" && video.muted) {
+              video.stop();
+              void healMedia();
+            }
+          }, 1_200);
+        }
+        return;
+      }
+      try {
+        const fresh = await getCallMedia();
+        if (unmounted) {
+          fresh.getTracks().forEach((track) => track.stop());
           return;
         }
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch {
-          /* candidato tardío */
-        }
+        stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = fresh;
+        setLocalStream(fresh);
+        await playLocal(fresh);
+        await syncPeerTracks(peersRef.current.values(), fresh);
+        setCamReady(true);
+      } catch {
+        /* la cámara vuelve al tocar Volver */
       }
     }
 
     async function start() {
-      setLinkHint("Encendiendo cámara…");
+      const adopted = takeHeld(roomId, user.id);
+      const adoptedLive = !!adopted?.stream.getTracks().some((track) => track.readyState === "live");
+      if (adopted && !adoptedLive) {
+        adopted.stream.getTracks().forEach((track) => track.stop());
+        adopted.peers.forEach((pc) => pc.close());
+      }
+
+      setLinkHint(adoptedLive ? "Sigues en la llamada…" : "Encendiendo cámara…");
       const icePromise = fetch("/api/call/ice", { credentials: "include" })
         .then((r) => (r.ok ? r.json() : { iceServers: defaultIceServers() }))
         .then((data) => {
@@ -450,28 +558,53 @@ export function VideoRoom({
         })
         .catch(() => undefined);
 
-      try {
-        streamRef.current = await getCallMedia();
-        if (unmounted) return;
-        setLocalStream(streamRef.current);
-        await playLocal(streamRef.current);
+      if (adoptedLive && adopted) {
+        streamRef.current = adopted.stream;
+        peersRef.current = adopted.peers;
+        pendingIceRef.current = adopted.pendingIce;
+        peerBornRef.current = adopted.peerBorn;
+        seenSignalsRef.current = adopted.seenSignals;
+        if (adopted.iceServers.length) iceServersRef.current = adopted.iceServers;
+        peersRef.current.forEach((pc, id) => wirePeer(id, pc));
+        setLocalStream(adopted.stream);
+        await playLocal(adopted.stream);
         setCamReady(true);
         setLinkHint("Conectando la noche…");
-      } catch {
-        setCamError("El celular pide permiso. Toca Permitir en cámara y micrófono, o toca la pantalla negra y vuelve a entrar.");
-        return;
+      } else {
+        try {
+          streamRef.current = await getCallMedia();
+          if (unmounted) {
+            parkNow();
+            return;
+          }
+          setLocalStream(streamRef.current);
+          await playLocal(streamRef.current);
+          setCamReady(true);
+          setLinkHint("Conectando la noche…");
+        } catch {
+          setCamError("El celular pide permiso. Toca Permitir en cámara y micrófono, o toca la pantalla negra y vuelve a entrar.");
+          return;
+        }
       }
       await icePromise;
+      if (unmounted) {
+        parkNow();
+        return;
+      }
+      pullers.push(
+        armCallBackground({
+          video: () => localRef.current,
+          onVisible: () => {
+            void healMedia();
+          },
+        }),
+      );
 
       let socketToken: string | undefined;
       if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
         const tokenRes = await fetch("/api/auth/socket", { credentials: "include" });
         const tokenJson = await tokenRes.json().catch(() => ({}));
-        if (!tokenRes.ok || !tokenJson.token) {
-          setCamError("No se pudo abrir el canal en vivo. Vuelve a entrar.");
-          return;
-        }
-        socketToken = tokenJson.token as string;
+        if (tokenRes.ok && tokenJson.token) socketToken = tokenJson.token as string;
       }
 
       try {
@@ -480,30 +613,13 @@ export function VideoRoom({
           { id: user.id, displayName: user.displayName, role: user.role },
           {
             onPeers: (ids) => {
-              const unique = [...new Set(ids.filter(Boolean))];
-              const now = Date.now();
-              peersRef.current.forEach((pc, id) => {
-                if (id === user.id || unique.includes(id)) {
-                  missingPeersRef.current.delete(id);
-                  return;
-                }
-                if (isLiveIce(pc.iceConnectionState) || isLiveIce(pc.connectionState)) {
-                  missingPeersRef.current.delete(id);
-                  return;
-                }
-                const since = missingPeersRef.current.get(id) ?? now;
-                missingPeersRef.current.set(id, since);
-                if (now - since < 18_000) return;
-                pc.close();
-                peersRef.current.delete(id);
-                pendingIceRef.current.delete(id);
-                setRemotes((prev) => prev.filter((r) => r.id !== id));
-              });
+              const unique = [...new Set([...ids, ...knownPeerIds()].filter(Boolean))];
               void (async () => {
                 for (const id of unique) {
                   if (id === user.id) continue;
                   await ensurePeer(id);
                   await makeOffer(id);
+                  resendLocal(id);
                 }
               })();
             },
@@ -582,6 +698,8 @@ export function VideoRoom({
               })();
             },
             onGuestLeft: (guest) => {
+              if (guest.userId === user.id) return;
+              if (!guest.kicked) return;
               setGuestName(null);
               setGuestUserId(null);
               setJoiningName(null);
@@ -592,13 +710,10 @@ export function VideoRoom({
               pushLine({
                 from: "KITTY",
                 role: "SYSTEM",
-                body: guest.kicked
-                  ? `${guest.displayName ?? "La Kitty invitada"} salió de la noche`
-                  : `${guest.displayName ?? "La Kitty invitada"} se desconectó`,
+                body: `${guest.displayName ?? "La Kitty invitada"} salió de la noche`,
                 at: Date.now(),
                 kind: "system",
               });
-              if (mySeat === "GUEST" && guest.userId === user.id) router.push("/studio");
             },
             onCallEnded: () => {
               if (isHost && guestNameRef.current) {
@@ -612,6 +727,7 @@ export function VideoRoom({
         );
         if (unmounted) {
           channel.disconnect();
+          parkNow();
           return;
         }
         channelRef.current = channel;
@@ -620,20 +736,15 @@ export function VideoRoom({
         }
         setLinkHint("Esperando a que el otro entre…");
       } catch {
-        if (!unmounted) setCamError("No se pudo abrir el canal en vivo. Vuelve a entrar.");
+        if (!unmounted) setLinkHint("La señal va por la sala. Sigue en la llamada.");
       }
 
-      let after = Date.now() - 8_000;
       async function pullSignals() {
-        const res = await fetch(`/api/call/${roomId}/signal?after=${after}`, { credentials: "include" });
+        const since = Date.now() - 20_000;
+        const res = await fetch(`/api/call/${roomId}/signal?after=${since}`, { credentials: "include" });
         const data = await res.json().catch(() => ({ signals: [] }));
         for (const row of data.signals ?? []) {
-          if (typeof row.at === "number") after = Math.max(after, row.at);
-          if (row.from) {
-            await ensurePeer(row.from);
-            await handleSignal(row.data ?? {}, row.from);
-            await makeOffer(row.from);
-          }
+          if (row.from) await handleSignal(row.data ?? {}, row.from);
         }
       }
       void pullSignals();
@@ -641,21 +752,29 @@ export function VideoRoom({
         if (!unmounted) void pullSignals();
       }, 700);
       pullers.push(() => window.clearInterval(pullTick));
+      void (async () => {
+        for (const id of knownPeerIds()) {
+          await ensurePeer(id);
+          await makeOffer(id);
+        }
+      })();
     }
 
     const pullers: Array<() => void> = [];
 
     const tuneTick = window.setInterval(() => {
-      if (unmounted) return;
+      if (unmounted || document.visibilityState === "hidden") return;
       void tuneAll();
-      peersRef.current.forEach((pc, id) => {
-        const age = Date.now() - (peerBornRef.current.get(id) ?? 0);
-        if (isStuckPeer(pc, age)) {
-          void ensurePeer(id, true).then(() => makeOffer(id));
-          return;
+      void (async () => {
+        for (const id of knownPeerIds()) {
+          const pc = peersRef.current.get(id);
+          const age = Date.now() - (peerBornRef.current.get(id) ?? 0);
+          if (pc && isStuckPeer(pc, age)) await ensurePeer(id, true);
+          else await ensurePeer(id);
+          await makeOffer(id);
+          resendLocal(id);
         }
-        void makeOffer(id);
-      });
+      })();
     }, 2500);
 
     void start();
@@ -663,14 +782,7 @@ export function VideoRoom({
       unmounted = true;
       window.clearInterval(tuneTick);
       pullers.forEach((stop) => stop());
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      peersRef.current.forEach((pc) => pc.close());
-      peersRef.current.clear();
-      pendingIceRef.current.clear();
-      missingPeersRef.current.clear();
-      peerBornRef.current.clear();
-      channelRef.current?.disconnect();
-      channelRef.current = null;
+      parkNow();
     };
   }, [roomId, me?.id, me?.role, me?.displayName, hostName, isHost, isUser, mySeat, router]);
 
@@ -920,6 +1032,8 @@ export function VideoRoom({
   }
 
   async function finishCall() {
+    closingRef.current = true;
+    dropHeld();
     const res = await fetch(`/api/call/${roomId}/end`, { method: "POST" });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.left === "guest") {
@@ -935,15 +1049,6 @@ export function VideoRoom({
   }
 
   const previewOver = phase === "PREVIEW" && !!endsAt && new Date(endsAt).getTime() <= nowTick;
-
-  useEffect(() => {
-    if (!endsAt || closingRef.current || sending) return;
-    if (phase === "PREVIEW") return;
-    if (new Date(endsAt).getTime() > nowTick) return;
-    if (pending) return;
-    closingRef.current = true;
-    void finishCall();
-  }, [endsAt, nowTick, pending, sending, phase]);
 
   async function sendTipAndClose() {
     if (tipOrbes > 0) {
