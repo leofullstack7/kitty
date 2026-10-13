@@ -17,7 +17,7 @@ export default function StudioPage() {
   const [tipOrbes, setTipOrbes] = useState(10);
   const [userId, setUserId] = useState("");
   const [percent, setPercent] = useState(10);
-  const [note, setNote] = useState("Porque tu JOIN mereció una segunda noche");
+  const [note, setNote] = useState("Porque esa noche mereció una segunda");
   const [msg, setMsg] = useState("");
 
   async function load() {
@@ -70,7 +70,7 @@ export default function StudioPage() {
       window.location.href = `/call/${data.roomId}`;
       return;
     }
-    if (!res.ok) setMsg(data.error ?? "No se pudo responder el JOIN");
+    if (!res.ok) setMsg(data.error ?? "No se pudo responder");
     load();
   }
 
@@ -124,7 +124,7 @@ export default function StudioPage() {
           {available ? "Estoy disponible" : "Ponerme en línea"}
         </button>
         <a href="/inbox" className="rounded-full border border-orchid/30 px-6 py-3 text-sm">
-          Bandeja JOIN
+          Bandeja
         </a>
       </div>
 

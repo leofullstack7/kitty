@@ -12,7 +12,7 @@ export default async function ExplorePage() {
       <p className="text-xs uppercase tracking-[0.4em] text-magenta">{live} en línea ahora</p>
       <h1 className="font-serif text-5xl">El salón no duerme</h1>
       <p className="mt-3 max-w-2xl text-orchid/75">
-        Toca una card. Mira su perfil. Ofrece el JOIN con orbes. Si está en verde, la noche todavía puede ser tuya.
+        Toca una card. Mira su perfil. Paga 1 orbe por conocerla. Si está en verde, todavía puedes entrar.
       </p>
       <div className="mt-10 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
         {kittys.map((k) => (

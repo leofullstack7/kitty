@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { jsonError, requireRole } from "@/lib/auth";
 import { originAllowed } from "@/lib/security";
 import { bustCatalog } from "@/lib/catalog";
-import { clearKittyBusy, kittyIsBusy, markKittyBusy } from "@/lib/occupancy";
+import { clearKittyBusy, kittyIsBusy, markKittyBusy, reconcileCallByRoom } from "@/lib/occupancy";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!originAllowed(req)) return jsonError("Origen no permitido", 403);
@@ -25,12 +25,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return jsonError("Esa noche ya terminó");
   }
 
+  await reconcileCallByRoom(invite.call.roomId, { abandon: false });
+  const live = await db.callSession.findUnique({ where: { id: invite.callId }, select: { guestKittyId: true, status: true } });
+  if (!live || live.status === "ENDED") {
+    await db.callInvite.update({ where: { id }, data: { status: "DECLINED", resolvedAt: new Date() } });
+    return jsonError("Esa noche ya terminó");
+  }
+
   if (status === "DECLINED") {
     await db.callInvite.update({ where: { id }, data: { status: "DECLINED", resolvedAt: new Date() } });
     return NextResponse.json({ ok: true });
   }
 
-  if (invite.call.guestKittyId) return jsonError("Ya entró otra Kitty");
+  if (live.guestKittyId) return jsonError("Ya entró otra Kitty");
   if (await kittyIsBusy(ctx.user.kittyProfile.id, invite.call.roomId)) {
     return jsonError("Estás en otra noche. Termínala antes de entrar a esta.");
   }

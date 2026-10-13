@@ -16,12 +16,12 @@ export function MobileDock() {
       : me.role === "KITTY"
         ? [
             ["/studio", "Studio"],
-            ["/inbox", "JOIN"],
+            ["/inbox", "Pedidos"],
             ["/explore", "Salón"],
           ]
         : [
             ["/explore", "Salón"],
-            ["/inbox", "JOIN"],
+            ["/inbox", "Sala"],
             ["/wallet", "Comprar"],
           ];
   return (

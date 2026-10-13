@@ -50,9 +50,11 @@ export default function InboxPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 pb-24 pt-8">
-      <h1 className="font-serif text-5xl">{isKitty ? "Quién quiere entrar" : "Tus JOIN"}</h1>
+      <h1 className="font-serif text-5xl">{isKitty ? "Quién quiere conocerte" : "Tus encuentros"}</h1>
       <p className="mt-2 text-orchid/75">
-        {isKitty ? "Acepta y se abre la habitación. Ignora y el silencio también es una respuesta." : "Si ella acepta, aquí aparece el botón para entrar a la videollamada."}
+        {isKitty
+          ? "Acepta y te paga 1 orbe por 5 minutos. Si le gustas, él crea la sala."
+          : "Si ella acepta, entras 5 minutos. Si hay chispa, creas la sala."}
       </p>
       <div className="mt-8 space-y-4">
         {items.map((p) => (

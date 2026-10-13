@@ -2,14 +2,29 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ORBE_PACKS } from "@/lib/constants";
+import { EXTEND_MINUTES, EXTEND_ORBES, ORBE_PACKS, ROOM_MINUTES, ROOM_ORBES } from "@/lib/constants";
 import { useSession } from "@/components/session";
+import { CallTimer } from "@/components/call-timer";
+import { CallMediaDock } from "@/components/call-media-dock";
 import {
   connectCallChannel,
   type ActivityAsk,
   type CallChannel,
   type ChatLine,
 } from "@/lib/call-channel";
+import {
+  applySendQuality,
+  defaultIceServers,
+  getCallMedia,
+  isLiveIce,
+  isStuckPeer,
+  nextRung,
+  readLinkHealth,
+  rtcConfig,
+  shouldOffer,
+  syncPeerTracks,
+} from "@/lib/webrtc";
+import type { SignalData } from "@/lib/call-channel";
 
 type Seat = "USER" | "HOST" | "GUEST";
 type Remote = { id: string; name: string; stream: MediaStream };
@@ -18,16 +33,48 @@ type MenuTip = { id: string; title: string; orbes: number };
 
 function RemoteTile({ stream, name }: { stream: MediaStream; name: string }) {
   const ref = useRef<HTMLVideoElement>(null);
+  const [blocked, setBlocked] = useState(false);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.srcObject = stream;
+    el.muted = true;
+    el.playsInline = true;
     el.setAttribute("playsinline", "true");
-    void el.play().catch(() => undefined);
+    el.setAttribute("webkit-playsinline", "true");
+    const start = () => {
+      void el
+        .play()
+        .then(() => {
+          el.muted = false;
+          return el.play();
+        })
+        .then(() => setBlocked(false))
+        .catch(() => setBlocked(true));
+    };
+    if (el.readyState >= 1) start();
+    else el.onloadedmetadata = start;
+    return () => {
+      el.onloadedmetadata = null;
+    };
   }, [stream]);
+
+  function unlock() {
+    const el = ref.current;
+    if (!el) return;
+    el.muted = false;
+    void el.play().then(() => setBlocked(false)).catch(() => setBlocked(true));
+  }
+
   return (
-    <div className="relative h-full min-h-[40vh] overflow-hidden bg-black">
-      <video ref={ref} autoPlay playsInline className="h-full w-full object-cover" />
+    <div className="relative h-full min-h-[40vh] overflow-hidden bg-black" onClick={unlock}>
+      <video ref={ref} autoPlay playsInline muted className="h-full w-full object-cover" style={{ objectFit: "cover" }} />
+      {blocked && (
+        <button type="button" className="absolute inset-0 z-10 grid place-items-center bg-black/45 text-sm" onClick={unlock}>
+          Toca para verla y oírla
+        </button>
+      )}
       <p className="absolute bottom-3 left-3 rounded-full bg-black/55 px-3 py-1 text-xs">{name}</p>
     </div>
   );
@@ -52,6 +99,8 @@ export function VideoRoom({
   guestUserId: guestUserIdProp,
   callerUserId,
   mySeat,
+  phase: phaseProp,
+  endsAt: endsAtProp,
 }: {
   roomId: string;
   hostName: string;
@@ -61,6 +110,8 @@ export function VideoRoom({
   guestUserId: string | null;
   callerUserId: string;
   mySeat: Seat;
+  phase: "PREVIEW" | "ROOM";
+  endsAt: string | null;
 }) {
   const { me, refresh } = useSession();
   const router = useRouter();
@@ -86,13 +137,37 @@ export function VideoRoom({
   const [invitees, setInvitees] = useState<Invitee[]>([]);
   const [guestName, setGuestName] = useState(guestNameProp);
   const [guestUserId, setGuestUserId] = useState(guestUserIdProp);
+  const [joiningName, setJoiningName] = useState<string | null>(null);
   const [tipOpen, setTipOpen] = useState(false);
   const [tipOrbes, setTipOrbes] = useState(5);
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
+  const [phase, setPhase] = useState<"PREVIEW" | "ROOM">(phaseProp);
+  const [endsAt, setEndsAt] = useState<string | null>(endsAtProp);
+  const [nowTick, setNowTick] = useState(Date.now());
+  const [mirrored, setMirrored] = useState(true);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const closingRef = useRef(false);
+  const [linkHint, setLinkHint] = useState("");
+  const iceServersRef = useRef<RTCIceServer[]>(defaultIceServers());
+  const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  const missingPeersRef = useRef<Map<string, number>>(new Map());
+  const qualityRungRef = useRef(2);
+  const makingOfferRef = useRef<Set<string>>(new Set());
+  const peerBornRef = useRef<Map<string, number>>(new Map());
+  const seenSignalsRef = useRef<Set<string>>(new Set());
+  const mediaReadySent = useRef(false);
+  const guestUserIdRef = useRef(guestUserIdProp);
+  guestUserIdRef.current = guestUserId;
+  const guestNameRef = useRef(guestNameProp);
+  guestNameRef.current = guestName;
 
   const isUser = mySeat === "USER";
   const isHost = mySeat === "HOST";
+  const isKittySeat = mySeat === "HOST" || mySeat === "GUEST";
+  const hasGuest = Boolean(guestUserId);
+  const canKick = isHost && (hasGuest || !!joiningName);
+  const canInvite = isKittySeat;
   const peerLabel = isUser ? hostName : userName;
 
   namesRef.current = {
@@ -119,13 +194,56 @@ export function VideoRoom({
         if (!data) return;
         setChat(data.events ?? []);
         if (data.pendingActivity) setPending(data.pendingActivity);
-        if (data.guest) {
+        if (data.guest?.live) {
           setGuestName(data.guest.displayName);
           setGuestUserId(data.guest.userId);
+          setJoiningName(null);
+        } else {
+          setGuestName(null);
+          setGuestUserId(null);
+          setJoiningName(data.guest?.displayName ?? null);
+        }
+        if (data.phase === "PREVIEW" || data.phase === "ROOM") setPhase(data.phase);
+        if (data.endsAt !== undefined) setEndsAt(data.endsAt);
+        if (data.status === "ENDED") {
+          router.push(isUser ? "/inbox" : "/studio");
         }
       })
       .catch(() => undefined);
-  }, [roomId]);
+  }, [roomId, isUser, router]);
+
+  useEffect(() => {
+    let stop = false;
+    async function beat() {
+      const res = await fetch(`/api/call/${roomId}/presence`, { method: "POST", credentials: "include" });
+      const data = await res.json().catch(() => ({}));
+      if (stop) return;
+      if (data.kicked || res.status === 410) {
+        router.push(mySeat === "USER" ? "/inbox" : "/studio");
+        return;
+      }
+      if (data.phase === "PREVIEW" || data.phase === "ROOM") setPhase(data.phase);
+      if (data.endsAt) setEndsAt(data.endsAt);
+      if (!data.guestId) {
+        setGuestName(null);
+        setGuestUserId(null);
+        setJoiningName(null);
+      } else if (data.guestLive) {
+        setJoiningName(null);
+      }
+    }
+    void beat();
+    const t = window.setInterval(() => void beat(), 4000);
+    return () => {
+      stop = true;
+      window.clearInterval(t);
+    };
+  }, [roomId, mySeat, router]);
+
+  useEffect(() => {
+    const t = window.setInterval(() => setNowTick(Date.now()), 250);
+    return () => window.clearInterval(t);
+  }, []);
 
   useEffect(() => {
     if (!isUser) return;
@@ -160,46 +278,190 @@ export function VideoRoom({
       });
     }
 
-    async function ensurePeer(peerId: string) {
-      if (!peerId || peerId === user.id || peersRef.current.has(peerId) || !streamRef.current) return;
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    async function flushIce(peerId: string, pc: RTCPeerConnection) {
+      const queued = pendingIceRef.current.get(peerId) ?? [];
+      pendingIceRef.current.delete(peerId);
+      for (const candidate of queued) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch {
+          /* el par aún no está listo */
+        }
+      }
+    }
+
+    async function tuneAll() {
+      const count = Math.max(1, peersRef.current.size);
+      for (const pc of peersRef.current.values()) {
+        const health = await readLinkHealth(pc).catch(() => ({ rtt: 0, lossRate: 0, nack: 0 }));
+        qualityRungRef.current = nextRung(qualityRungRef.current, health);
+        await applySendQuality(pc, count, qualityRungRef.current);
+      }
+      const live = [...peersRef.current.values()].some((pc) => isLiveIce(pc.iceConnectionState));
+      if (!live) setLinkHint("Buscando la mejor ruta…");
+      else if (qualityRungRef.current === 0) setLinkHint("Señal justa. Bajamos un poco para que no se corte.");
+      else setLinkHint("");
+    }
+
+    function sendSignal(data: SignalData, to?: string) {
+      channelRef.current?.sendSignal(data, to);
+      void fetch(`/api/call/${roomId}/signal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ to, data }),
+      }).catch(() => undefined);
+    }
+
+    function markMediaReady() {
+      if (mediaReadySent.current) return;
+      mediaReadySent.current = true;
+      void fetch(`/api/call/${roomId}/ready`, { method: "POST", credentials: "include" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data?.endsAt) setEndsAt(data.endsAt);
+        })
+        .catch(() => undefined);
+    }
+
+    async function ensurePeer(peerId: string, force = false) {
+      if (!peerId || peerId === user.id || !streamRef.current) return;
+      const existing = peersRef.current.get(peerId);
+      const age = Date.now() - (peerBornRef.current.get(peerId) ?? Date.now());
+      if (existing && !force && !isStuckPeer(existing, age) && existing.connectionState !== "closed" && existing.connectionState !== "failed") {
+        return;
+      }
+      existing?.close();
+      const pc = new RTCPeerConnection(rtcConfig(iceServersRef.current));
       streamRef.current.getTracks().forEach((t) => pc.addTrack(t, streamRef.current!));
+      await applySendQuality(pc, Math.max(1, peersRef.current.size + 1), qualityRungRef.current);
       pc.ontrack = (ev) => {
-        const remote = ev.streams[0];
-        if (remote) upsertRemote(peerId, remote);
+        const remote = ev.streams[0] ?? new MediaStream(ev.track ? [ev.track] : []);
+        if (remote.getTracks().length) {
+          upsertRemote(peerId, remote);
+          markMediaReady();
+        }
       };
       pc.onicecandidate = (ev) => {
-        if (ev.candidate) channelRef.current?.sendSignal({ candidate: ev.candidate.toJSON() }, peerId);
+        if (ev.candidate) sendSignal({ candidate: ev.candidate.toJSON() }, peerId);
+      };
+      pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+          missingPeersRef.current.delete(peerId);
+          markMediaReady();
+          void applySendQuality(pc, Math.max(1, peersRef.current.size), qualityRungRef.current);
+        }
+        if (pc.iceConnectionState === "disconnected") {
+          window.setTimeout(() => {
+            if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+              void restartIce(peerId);
+            }
+          }, 2500);
+        }
+        if (pc.iceConnectionState === "failed") void restartIce(peerId);
       };
       peersRef.current.set(peerId, pc);
+      peerBornRef.current.set(peerId, Date.now());
+    }
+
+    async function restartIce(peerId: string) {
+      const pc = peersRef.current.get(peerId);
+      if (!pc || user.id > peerId) return;
+      try {
+        const offer = await pc.createOffer({ iceRestart: true });
+        await pc.setLocalDescription(offer);
+        sendSignal({ sdp: offer }, peerId);
+      } catch {
+        /* reintento en el siguiente pulso */
+      }
     }
 
     async function makeOffer(peerId: string) {
       const pc = peersRef.current.get(peerId);
-      if (!pc || pc.signalingState !== "stable") return;
-      if (user.id > peerId) return;
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      channelRef.current?.sendSignal({ sdp: offer }, peerId);
+      const age = Date.now() - (peerBornRef.current.get(peerId) ?? 0);
+      if (!pc || user.id > peerId || !shouldOffer(pc, age) || makingOfferRef.current.has(peerId)) return;
+      makingOfferRef.current.add(peerId);
+      try {
+        const offer = await pc.createOffer();
+        if (pc.signalingState !== "stable") return;
+        await pc.setLocalDescription(offer);
+        sendSignal({ sdp: offer }, peerId);
+      } catch {
+        /* glare */
+      } finally {
+        makingOfferRef.current.delete(peerId);
+      }
+    }
+
+    async function handleSignal(data: SignalData, from: string) {
+      if (!from || from === user.id) return;
+      const key = data.sdp
+        ? `${from}:sdp:${data.sdp.type}:${(data.sdp.sdp ?? "").slice(0, 96)}`
+        : `${from}:ice:${data.candidate?.candidate ?? ""}`;
+      if (seenSignalsRef.current.has(key)) return;
+      seenSignalsRef.current.add(key);
+      await ensurePeer(from);
+      const pc = peersRef.current.get(from);
+      if (!pc) return;
+      const polite = user.id > from;
+      if (data.sdp) {
+        const offerCollision = data.sdp.type === "offer" && (makingOfferRef.current.has(from) || pc.signalingState !== "stable");
+        if (offerCollision) {
+          if (!polite) return;
+          try {
+            await pc.setLocalDescription({ type: "rollback" });
+          } catch {
+            /* Safari no siempre hace rollback */
+          }
+        }
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          await flushIce(from, pc);
+        } catch {
+          return;
+        }
+        if (data.sdp.type === "offer") {
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          sendSignal({ sdp: answer }, from);
+        }
+      }
+      if (data.candidate) {
+        if (!pc.remoteDescription) {
+          const q = pendingIceRef.current.get(from) ?? [];
+          q.push(data.candidate);
+          pendingIceRef.current.set(from, q);
+          return;
+        }
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch {
+          /* candidato tardío */
+        }
+      }
     }
 
     async function start() {
+      setLinkHint("Encendiendo cámara…");
+      const icePromise = fetch("/api/call/ice", { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : { iceServers: defaultIceServers() }))
+        .then((data) => {
+          if (Array.isArray(data.iceServers) && data.iceServers.length) iceServersRef.current = data.iceServers;
+        })
+        .catch(() => undefined);
+
       try {
-        try {
-          streamRef.current = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-            video: { facingMode: "user", width: { ideal: 480 }, height: { ideal: 640 } },
-          });
-        } catch {
-          streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-        }
+        streamRef.current = await getCallMedia();
         if (unmounted) return;
+        setLocalStream(streamRef.current);
         await playLocal(streamRef.current);
         setCamReady(true);
+        setLinkHint("Conectando la noche…");
       } catch {
         setCamError("El celular pide permiso. Toca Permitir en cámara y micrófono, o toca la pantalla negra y vuelve a entrar.");
         return;
       }
+      await icePromise;
 
       let socketToken: string | undefined;
       if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
@@ -218,34 +480,41 @@ export function VideoRoom({
           { id: user.id, displayName: user.displayName, role: user.role },
           {
             onPeers: (ids) => {
+              const unique = [...new Set(ids.filter(Boolean))];
+              const now = Date.now();
+              peersRef.current.forEach((pc, id) => {
+                if (id === user.id || unique.includes(id)) {
+                  missingPeersRef.current.delete(id);
+                  return;
+                }
+                if (isLiveIce(pc.iceConnectionState) || isLiveIce(pc.connectionState)) {
+                  missingPeersRef.current.delete(id);
+                  return;
+                }
+                const since = missingPeersRef.current.get(id) ?? now;
+                missingPeersRef.current.set(id, since);
+                if (now - since < 18_000) return;
+                pc.close();
+                peersRef.current.delete(id);
+                pendingIceRef.current.delete(id);
+                setRemotes((prev) => prev.filter((r) => r.id !== id));
+              });
               void (async () => {
-                for (const id of ids) {
+                for (const id of unique) {
                   if (id === user.id) continue;
                   await ensurePeer(id);
                   await makeOffer(id);
                 }
               })();
             },
-            onSignal: async (data, from) => {
-              if (!from) return;
-              await ensurePeer(from);
-              const pc = peersRef.current.get(from);
-              if (!pc) return;
-              if (data.sdp) {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-                if (data.sdp.type === "offer") {
-                  const answer = await pc.createAnswer();
-                  await pc.setLocalDescription(answer);
-                  channelRef.current?.sendSignal({ sdp: answer }, from);
-                }
-              }
-              if (data.candidate) {
-                try {
-                  await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-                } catch {
-                  /* ignore */
-                }
-              }
+            onPeerJoined: (id) => {
+              void (async () => {
+                await ensurePeer(id);
+                await makeOffer(id);
+              })();
+            },
+            onSignal: (data, from) => {
+              void handleSignal(data, from);
             },
             onChat: (line) => {
               if (!unmounted) pushLine({ ...line, kind: line.kind ?? "chat" });
@@ -298,6 +567,7 @@ export function VideoRoom({
             onGuestJoined: (guest) => {
               setGuestName(guest.displayName);
               setGuestUserId(guest.userId);
+              setJoiningName(null);
               namesRef.current[guest.userId] = guest.displayName;
               pushLine({
                 from: "KITTY",
@@ -306,9 +576,32 @@ export function VideoRoom({
                 at: Date.now(),
                 kind: "system",
               });
+              void (async () => {
+                await ensurePeer(guest.userId);
+                await makeOffer(guest.userId);
+              })();
+            },
+            onGuestLeft: (guest) => {
+              setGuestName(null);
+              setGuestUserId(null);
+              setJoiningName(null);
+              setRemotes((prev) => prev.filter((r) => r.id !== guest.userId));
+              const pc = peersRef.current.get(guest.userId);
+              pc?.close();
+              peersRef.current.delete(guest.userId);
+              pushLine({
+                from: "KITTY",
+                role: "SYSTEM",
+                body: guest.kicked
+                  ? `${guest.displayName ?? "La Kitty invitada"} salió de la noche`
+                  : `${guest.displayName ?? "La Kitty invitada"} se desconectó`,
+                at: Date.now(),
+                kind: "system",
+              });
+              if (mySeat === "GUEST" && guest.userId === user.id) router.push("/studio");
             },
             onCallEnded: () => {
-              if (isHost && guestName) {
+              if (isHost && guestNameRef.current) {
                 setTipOpen(true);
                 return;
               }
@@ -325,21 +618,61 @@ export function VideoRoom({
         if (mySeat === "GUEST") {
           channel.sendGuestJoined({ displayName: user.displayName, userId: user.id });
         }
+        setLinkHint("Esperando a que el otro entre…");
       } catch {
         if (!unmounted) setCamError("No se pudo abrir el canal en vivo. Vuelve a entrar.");
       }
+
+      let after = Date.now() - 8_000;
+      async function pullSignals() {
+        const res = await fetch(`/api/call/${roomId}/signal?after=${after}`, { credentials: "include" });
+        const data = await res.json().catch(() => ({ signals: [] }));
+        for (const row of data.signals ?? []) {
+          if (typeof row.at === "number") after = Math.max(after, row.at);
+          if (row.from) {
+            await ensurePeer(row.from);
+            await handleSignal(row.data ?? {}, row.from);
+            await makeOffer(row.from);
+          }
+        }
+      }
+      void pullSignals();
+      const pullTick = window.setInterval(() => {
+        if (!unmounted) void pullSignals();
+      }, 700);
+      pullers.push(() => window.clearInterval(pullTick));
     }
+
+    const pullers: Array<() => void> = [];
+
+    const tuneTick = window.setInterval(() => {
+      if (unmounted) return;
+      void tuneAll();
+      peersRef.current.forEach((pc, id) => {
+        const age = Date.now() - (peerBornRef.current.get(id) ?? 0);
+        if (isStuckPeer(pc, age)) {
+          void ensurePeer(id, true).then(() => makeOffer(id));
+          return;
+        }
+        void makeOffer(id);
+      });
+    }, 2500);
 
     void start();
     return () => {
       unmounted = true;
+      window.clearInterval(tuneTick);
+      pullers.forEach((stop) => stop());
       streamRef.current?.getTracks().forEach((t) => t.stop());
       peersRef.current.forEach((pc) => pc.close());
       peersRef.current.clear();
+      pendingIceRef.current.clear();
+      missingPeersRef.current.clear();
+      peerBornRef.current.clear();
       channelRef.current?.disconnect();
       channelRef.current = null;
     };
-  }, [roomId, me?.id, me?.role, me?.displayName, hostName, isHost, isUser, mySeat, guestName, router]);
+  }, [roomId, me?.id, me?.role, me?.displayName, hostName, isHost, isUser, mySeat, router]);
 
   async function sendChat(e: React.FormEvent) {
     e.preventDefault();
@@ -451,16 +784,118 @@ export function VideoRoom({
     if (status === "ACCEPTED") {
       showBloom(pending.orbes);
       channelRef.current?.sendOrbe(pending.orbes, pending.activity);
+      if (data.endsAt) setEndsAt(data.endsAt);
       await refresh();
     }
     setPending(null);
   }
 
-  async function loadInvitees() {
+  async function createRoom() {
+    if (sending) return;
+    setSending(true);
+    const res = await fetch(`/api/call/${roomId}/room`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    setSending(false);
+    if (!res.ok) {
+      setNote(data.error ?? "No se pudo crear la sala");
+      return;
+    }
+    setPhase("ROOM");
+    setEndsAt(data.endsAt ?? null);
+    showBloom(ROOM_ORBES);
+    await refresh();
+  }
+
+  async function askMoreTime() {
+    if (sending) return;
+    setSending(true);
+    const res = await fetch(`/api/call/${roomId}/time`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    setSending(false);
+    if (!res.ok) {
+      setNote(data.error ?? "No se pudo pedir más tiempo");
+      return;
+    }
+    const ask = data.activity as ActivityAsk;
+    setPending(ask);
+    channelRef.current?.sendActivity(ask);
+    pushLine({
+      from: me?.displayName ?? "tú",
+      role: "USER",
+      body: `pide +${EXTEND_MINUTES} minutos por ${EXTEND_ORBES} orbes · esperando a ella`,
+      at: Date.now(),
+      kind: "activity",
+      orbes: EXTEND_ORBES,
+      activity: `+${EXTEND_MINUTES} minutos`,
+      status: "PENDING",
+    });
+  }
+
+  async function onStreamChange(stream: MediaStream) {
+    streamRef.current = stream;
+    setLocalStream(stream);
+    const el = localRef.current;
+    if (el) {
+      el.srcObject = stream;
+      void el.play().catch(() => undefined);
+    }
+    await syncPeerTracks(peersRef.current.values(), stream);
+  }
+
+  async function openInvite() {
+    setNote("");
+    setInviteOpen(true);
+    if (!isHost) return;
     const res = await fetch(`/api/call/${roomId}/invite`, { credentials: "include" });
     const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNote(data.error ?? "No se pudo abrir la lista");
+    }
     setInvitees(data.kittys ?? []);
-    setInviteOpen(true);
+    if (!data.guestId) {
+      setJoiningName(null);
+      if (!guestUserIdRef.current) {
+        setGuestName(null);
+        setGuestUserId(null);
+      }
+    }
+  }
+
+  async function kickGuest() {
+    if (!isHost) return;
+    setSending(true);
+    const res = await fetch(`/api/call/${roomId}/kick`, { method: "POST", credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    setSending(false);
+    if (!res.ok) {
+      setNote(data.error ?? "No se pudo expulsar");
+      return;
+    }
+    const gone = {
+      userId: data.guest?.userId ?? guestUserId ?? "",
+      displayName: data.guest?.displayName ?? guestName ?? joiningName ?? undefined,
+      kicked: true,
+    };
+    channelRef.current?.sendGuestLeft(gone);
+    setGuestName(null);
+    setGuestUserId(null);
+    setJoiningName(null);
+    if (gone.userId) {
+      setRemotes((prev) => prev.filter((r) => r.id !== gone.userId));
+      peersRef.current.get(gone.userId)?.close();
+      peersRef.current.delete(gone.userId);
+    }
+    pushLine({
+      from: hostName,
+      role: "SYSTEM",
+      body: `expulsó a ${gone.displayName ?? "la Kitty invitada"} de esta noche`,
+      at: Date.now(),
+      kind: "system",
+    });
+    const list = await fetch(`/api/call/${roomId}/invite`, { credentials: "include" });
+    const next = await list.json().catch(() => ({}));
+    setInvitees(next.kittys ?? []);
+    setNote("");
   }
 
   async function sendInvite(toKittyId: string) {
@@ -486,9 +921,29 @@ export function VideoRoom({
 
   async function finishCall() {
     const res = await fetch(`/api/call/${roomId}/end`, { method: "POST" });
-    if (res.ok) channelRef.current?.sendCallEnded();
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.left === "guest") {
+      channelRef.current?.sendGuestLeft({
+        userId: me?.id ?? "",
+        displayName: me?.displayName,
+        kicked: false,
+      });
+    } else if (res.ok) {
+      channelRef.current?.sendCallEnded();
+    }
     router.push(isUser ? "/inbox" : "/studio");
   }
+
+  const previewOver = phase === "PREVIEW" && !!endsAt && new Date(endsAt).getTime() <= nowTick;
+
+  useEffect(() => {
+    if (!endsAt || closingRef.current || sending) return;
+    if (phase === "PREVIEW") return;
+    if (new Date(endsAt).getTime() > nowTick) return;
+    if (pending) return;
+    closingRef.current = true;
+    void finishCall();
+  }, [endsAt, nowTick, pending, sending, phase]);
 
   async function sendTipAndClose() {
     if (tipOrbes > 0) {
@@ -503,7 +958,7 @@ export function VideoRoom({
   }
 
   function askClose() {
-    if (isHost && guestName) {
+    if (isHost && guestNameRef.current) {
       setTipOpen(true);
       return;
     }
@@ -537,12 +992,12 @@ export function VideoRoom({
     </>
   );
 
-  const mobileActions = isUser ? 4 : isHost && !guestName ? 3 : 2;
+  const mobileActions = isUser ? 4 : canKick ? 4 : canInvite ? 3 : 2;
 
   return (
     <div className="relative mx-auto grid h-[calc(100dvh-56px)] max-w-[1400px] overflow-hidden md:h-auto md:min-h-[calc(100vh-80px)] md:grid-cols-[1fr_380px]">
       <div className="relative h-full min-h-0 overflow-hidden bg-black md:min-h-[calc(100vh-80px)]">
-        <div className={`absolute inset-0 pb-[5.8rem] md:pb-0 ${remotes.length > 1 ? "grid grid-cols-1 md:grid-cols-2" : ""}`}>
+        <div className={`absolute inset-0 pb-[9.2rem] md:pb-0 ${remotes.length > 1 ? "grid grid-cols-1 md:grid-cols-2" : ""}`}>
           {remotes.length === 0 && (
             <div className="grid h-full place-items-center bg-gradient-to-b from-plum to-void px-6 text-center">
               <div>
@@ -552,6 +1007,7 @@ export function VideoRoom({
                     ? "Tu cámara ya está prendida. El recuadro chiquito eres tú."
                     : "Encendiendo tu cámara. Si sale un aviso, toca Permitir."}
                 </p>
+                {linkHint && <p className="mt-2 text-xs text-orchid/60">{linkHint}</p>}
               </div>
             </div>
           )}
@@ -560,12 +1016,44 @@ export function VideoRoom({
           ))}
         </div>
 
+        {canInvite && phase === "ROOM" && (
+          <button
+            type="button"
+            className="glow-btn propose-pulse absolute left-3 top-3 z-20 max-w-[46%] px-3 py-2 text-[11px] leading-tight md:left-4 md:top-4 md:max-w-none md:px-5 md:py-2.5 md:text-sm"
+            onClick={() => void openInvite()}
+          >
+            Invitar a otra Kitty
+          </button>
+        )}
+
+        <CallTimer
+          phase={phase}
+          remainingMs={endsAt ? new Date(endsAt).getTime() - nowTick : null}
+          isUser={isUser}
+          busy={sending}
+          onCreateRoom={() => void createRoom()}
+          onMoreTime={() => void askMoreTime()}
+        />
+
+        {isUser && previewOver && (
+          <div className="absolute inset-x-3 bottom-28 z-30 md:inset-x-auto md:bottom-28 md:left-1/2 md:w-[min(420px,90%)] md:-translate-x-1/2">
+            <div className="rounded-3xl border border-violet-300/40 bg-black/75 p-4 text-center backdrop-blur-md">
+              <p className="font-serif text-2xl text-violet-100">¿Creas la sala con ella?</p>
+              <p className="mt-1 text-sm text-violet-200/75">Los 5 minutos se acabaron. Si hubo chispa, la noche sigue.</p>
+              <button type="button" className="glow-btn mt-3 w-full py-3 text-sm" disabled={sending} onClick={() => void createRoom()}>
+                Crear la sala · {ROOM_ORBES} orbes · {ROOM_MINUTES} min
+              </button>
+              {note && <p className="mt-2 text-xs text-rose-300">{note}</p>}
+            </div>
+          </div>
+        )}
+
         <video
           ref={localRef}
           autoPlay
           muted
           playsInline
-          className="absolute right-3 top-3 z-10 h-20 w-14 rounded-2xl border border-orchid/40 object-cover shadow-xl md:right-4 md:top-4 md:h-36 md:w-28"
+          className={`absolute right-3 top-3 z-10 h-20 w-14 rounded-2xl border border-orchid/40 object-cover shadow-xl md:right-4 md:top-4 md:h-36 md:w-28 ${mirrored ? "-scale-x-100" : ""}`}
         />
 
         {bloom && (
@@ -583,21 +1071,29 @@ export function VideoRoom({
         <div className="absolute inset-x-0 bottom-0 z-20 hidden bg-gradient-to-t from-black via-black/70 to-transparent p-5 md:block">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <p className="text-[10px] uppercase tracking-[0.3em] text-orchid/70">noche privada</p>
+              <p className="text-[10px] uppercase tracking-[0.3em] text-orchid/70">
+                noche privada{linkHint ? ` · ${linkHint}` : ""}
+              </p>
               <p className="font-serif text-2xl">
                 {hostName}
                 {guestName ? ` · ${guestName}` : ""}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {isUser && (
+              <CallMediaDock stream={localStream} mirrored={mirrored} onMirror={setMirrored} onStreamChange={onStreamChange} />
+              {isUser && phase === "ROOM" && (
                 <button className="glow-btn propose-pulse px-5 py-2 text-sm" onClick={() => setProposeOpen(true)}>
                   Su menú
                 </button>
               )}
-              {isHost && !guestName && (
-                <button className="rounded-full border border-orchid/40 px-4 py-2 text-sm" onClick={() => void loadInvitees()}>
-                  Invitar a otra Kitty
+              {canInvite && phase === "ROOM" && (
+                <button className="glow-btn propose-pulse px-5 py-2 text-sm" onClick={() => void openInvite()}>
+                  {hasGuest ? `Con ${guestName}` : joiningName ? `Esperando a ${joiningName}` : "Invitar a otra Kitty"}
+                </button>
+              )}
+              {canKick && (
+                <button className="rounded-full border border-rose-400/50 px-4 py-2 text-sm text-rose-200" onClick={() => void kickGuest()}>
+                  Expulsar
                 </button>
               )}
               <button className="rounded-full bg-white/10 px-4 py-2 text-sm" onClick={askClose}>
@@ -612,14 +1108,22 @@ export function VideoRoom({
             {hostName}
             {guestName ? ` · ${guestName}` : ""}
           </p>
+          <div className="mb-2">
+            <CallMediaDock stream={localStream} mirrored={mirrored} onMirror={setMirrored} onStreamChange={onStreamChange} />
+          </div>
           <div className={`grid gap-2 ${mobileActions === 4 ? "grid-cols-4" : mobileActions === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
             <button type="button" className="call-action" onClick={() => setChatOpen(true)}>
               <span>Chat</span>
               {unread > 0 && <span className="text-[10px] text-magenta">{unread}</span>}
             </button>
-            {isUser && (
+            {isUser && phase === "ROOM" && (
               <button type="button" className="call-action call-action-main propose-pulse" onClick={() => setProposeOpen(true)}>
                 Menú
+              </button>
+            )}
+            {isUser && phase === "PREVIEW" && (
+              <button type="button" className="call-action call-action-main propose-pulse" onClick={() => void createRoom()}>
+                Sala
               </button>
             )}
             {isUser && (
@@ -627,9 +1131,14 @@ export function VideoRoom({
                 Orbes
               </a>
             )}
-            {isHost && !guestName && (
-              <button type="button" className="call-action" onClick={() => void loadInvitees()}>
+            {canInvite && phase === "ROOM" && (
+              <button type="button" className="call-action call-action-main propose-pulse" onClick={() => void openInvite()}>
                 Invitar
+              </button>
+            )}
+            {canKick && (
+              <button type="button" className="call-action" onClick={() => void kickGuest()}>
+                Expulsar
               </button>
             )}
             <button type="button" className="call-action" onClick={askClose}>
@@ -645,11 +1154,30 @@ export function VideoRoom({
           <p className="font-serif text-2xl">{hostName}</p>
           <p className="text-xs text-white/50">Mensajes, orbes y lo que ella acepta. Nada de escenario público.</p>
         </div>
-        {isUser && (
+        {isUser && phase === "ROOM" && (
           <div className="border-b border-orchid/10 px-4 py-3">
             <button className="glow-btn propose-pulse w-full py-3 text-sm" onClick={() => setProposeOpen(true)}>
               Su menú
             </button>
+          </div>
+        )}
+        {canInvite && phase === "ROOM" && (
+          <div className="border-b border-orchid/10 px-4 py-3">
+            <button className="glow-btn propose-pulse w-full py-3 text-sm" onClick={() => void openInvite()}>
+              Invitar a otra Kitty
+            </button>
+            <p className="mt-2 text-[11px] leading-snug text-orchid/65">
+              {hasGuest
+                ? `${guestName} está conectada ahora. Puedes expulsarla si quieres invitar a otra. Los orbes del user siguen yendo a ti.`
+                : joiningName
+                  ? `${joiningName} aceptó pero todavía no entra a la sala. Si no llega, expúlsala e invita a otra.`
+                  : "Le llega una llamada grande. Si entra, quedan ustedes dos y el user. Los orbes siguen yendo a ti."}
+            </p>
+            {canKick && (
+              <button className="mt-3 w-full rounded-full border border-rose-400/45 py-2 text-sm text-rose-200" onClick={() => void kickGuest()}>
+                Expulsar a {guestName ?? joiningName}
+              </button>
+            )}
           </div>
         )}
         {chatPanel}
@@ -737,7 +1265,9 @@ export function VideoRoom({
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4">
           <div className="glass w-full max-w-2xl rounded-[2rem] p-6 md:p-10">
             <p className="text-[10px] uppercase tracking-[0.35em] text-magenta">propuesta de la noche</p>
-            <h3 className="mt-2 font-serif text-4xl md:text-5xl">{pending.from} te pide esto</h3>
+            <h3 className="mt-2 font-serif text-4xl md:text-5xl">
+              {pending.activity.startsWith("+") ? `${pending.from} quiere más tiempo` : `${pending.from} te pide esto`}
+            </h3>
             <p className="mt-6 font-serif text-2xl leading-snug text-[#f6e2ff] md:text-3xl">“{pending.activity}”</p>
             <div className="mt-8 flex items-end gap-4">
               <img src="/media/processed/brand/orbe.webp" alt="" className="h-14 w-14" />
@@ -766,23 +1296,45 @@ export function VideoRoom({
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-4">
           <div className="glass w-full max-w-lg rounded-3xl p-6">
             <h3 className="font-serif text-3xl">Invitar a otra Kitty</h3>
-            <p className="mt-2 text-sm text-orchid/75">Le llega una llamada grande. Si entra, ustedes dos y el user quedan juntos. Los orbes siguen yendo a ti.</p>
-            <div className="mt-5 max-h-72 space-y-2 overflow-y-auto">
-              {invitees.length === 0 && <p className="text-sm text-white/50">Nadie más está libre ahora.</p>}
-              {invitees.map((k) => (
-                <button
-                  key={k.id}
-                  className="flex w-full items-center gap-3 rounded-2xl border border-orchid/15 p-3 text-left hover:bg-white/5"
-                  onClick={() => void sendInvite(k.id)}
-                >
-                  <img src={k.avatarPath} alt="" className="h-12 w-12 rounded-full object-cover" />
-                  <div>
-                    <p className="font-serif text-xl">{k.displayName}</p>
-                    <p className="text-xs text-orchid/60">/{k.slug}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
+            {hasGuest ? (
+              <p className="mt-2 text-sm text-orchid/75">
+                {guestName} está conectada ahora. Si la expulsas, puedes invitar a otra. Los orbes del user siguen yendo a ti.
+              </p>
+            ) : joiningName ? (
+              <p className="mt-2 text-sm text-orchid/75">
+                {joiningName} aceptó la invitación pero no está en la sala. Expúlsala para invitar a otra.
+              </p>
+            ) : !isHost ? (
+              <p className="mt-2 text-sm text-orchid/75">Solo la anfitriona de esta noche puede mandar la invitación.</p>
+            ) : (
+              <p className="mt-2 text-sm text-orchid/75">
+                Le llega una llamada grande. Si hay varias invitadas, cada una elige. La primera que entre se queda. Los orbes del user siguen yendo a ti.
+              </p>
+            )}
+            {canKick && (
+              <button className="mt-4 w-full rounded-full border border-rose-400/45 py-3 text-rose-200" disabled={sending} onClick={() => void kickGuest()}>
+                Expulsar a {guestName ?? joiningName}
+              </button>
+            )}
+            {!hasGuest && !joiningName && isHost && (
+              <div className="mt-5 max-h-72 space-y-2 overflow-y-auto">
+                {invitees.length === 0 && <p className="text-sm text-white/50">Nadie más está libre ahora.</p>}
+                {invitees.map((k) => (
+                  <button
+                    key={k.id}
+                    className="flex w-full items-center gap-3 rounded-2xl border border-orchid/15 p-3 text-left hover:bg-white/5"
+                    onClick={() => void sendInvite(k.id)}
+                  >
+                    <img src={k.avatarPath} alt="" className="h-12 w-12 rounded-full object-cover" />
+                    <div>
+                      <p className="font-serif text-xl">{k.displayName}</p>
+                      <p className="text-xs text-orchid/60">/{k.slug}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {note && <p className="mt-3 text-sm text-rose-300">{note}</p>}
             <button className="mt-4 w-full rounded-full border border-orchid/30 py-3" onClick={() => setInviteOpen(false)}>
               Cerrar
             </button>

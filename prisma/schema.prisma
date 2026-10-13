@@ -154,12 +154,31 @@ model CallSession {
   guestKittyId String?
   guestKitty   KittyProfile? @relation("GuestCalls", fields: [guestKittyId], references: [id])
   status       String        @default("WAITING")
+  phase        String        @default("ROOM")
+  endsAt       DateTime?
   startedAt    DateTime?
   endedAt      DateTime?
+  createdAt    DateTime      @default(now())
+  hostSeenAt   DateTime?
+  userSeenAt   DateTime?
+  guestSeenAt  DateTime?
   messages     ChatMessage[]
   orbeBursts   OrbeBurst[]
   invites      CallInvite[]
   activities   CallActivity[]
+  signals      CallSignal[]
+}
+
+model CallSignal {
+  id        String      @id @default(cuid())
+  callId    String
+  call      CallSession @relation(fields: [callId], references: [id], onDelete: Cascade)
+  fromId    String
+  toId      String?
+  payload   String
+  createdAt DateTime    @default(now())
+
+  @@index([callId, createdAt])
 }
 
 model CallInvite {

@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { clearSessionCache, useSession } from "./session";
+import { KittyTicker } from "./kitty-ticker";
 
 function money(cop?: number) {
   const n = Math.max(0, Math.round(cop ?? 0));
@@ -12,6 +14,14 @@ function money(cop?: number) {
 export function Navbar({ compact = false }: { compact?: boolean }) {
   const { me, refresh } = useSession();
   const router = useRouter();
+
+  useEffect(() => {
+    if (me?.role !== "KITTY") return;
+    const tick = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 5000);
+    return () => window.clearInterval(tick);
+  }, [me?.role, refresh]);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
@@ -64,12 +74,8 @@ export function Navbar({ compact = false }: { compact?: boolean }) {
                 </Link>
               )}
               {me.role === "KITTY" && (
-                <Link href="/wallet" prefetch className="flex flex-col items-end rounded-2xl border border-orchid/30 px-3 py-1.5 leading-tight hover:bg-white/10">
-                  <span className="text-[11px]">Orbes · {me.balance}</span>
-                  <span className="text-[10px] text-orchid/80">
-                    {money(me.earnedCop)} ganados
-                    {(me.sentCop ?? 0) > 0 ? ` · ${money(me.sentCop)} enviados` : ""}
-                  </span>
+                <Link href="/wallet" prefetch className="flex items-center rounded-2xl border border-orchid/30 px-3 py-1.5 hover:bg-white/10">
+                  <KittyTicker balance={me.balance} earnedCop={me.earnedCop ?? 0} sentCop={me.sentCop} />
                 </Link>
               )}
               {me.role === "ADMIN" && (

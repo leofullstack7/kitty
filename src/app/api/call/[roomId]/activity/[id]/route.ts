@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { jsonError, requireRole } from "@/lib/auth";
 import { originAllowed } from "@/lib/security";
-import { ORB_COP_VALUE } from "@/lib/constants";
+import { EXTEND_MINUTES, TIME_EXTEND_MARK } from "@/lib/constants";
+import { chargeUserPayKitty, splitPaidBeat } from "@/lib/call-economy";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ roomId: string; id: string }> }) {
   if (!originAllowed(req)) return jsonError("Origen no permitido", 403);
@@ -38,44 +39,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ro
     return jsonError("Ya no le alcanzan los orbes");
   }
 
-  const kittyWallet =
-    call.kitty.user.wallet ??
-    (await db.wallet.create({ data: { userId: call.kitty.userId, balance: 0 } }));
+  const isTime = activity.activity === TIME_EXTEND_MARK;
+  const split = isTime ? splitPaidBeat(activity.orbes) : { userPays: activity.userPays, platformFee: activity.platformFee, kittyNet: activity.kittyNet, original: activity.orbes, percent: 0, valid: true };
+  const now = new Date();
+  const base = call.endsAt && call.endsAt.getTime() > now.getTime() ? call.endsAt : now;
+  const endsAt = isTime ? new Date(base.getTime() + EXTEND_MINUTES * 60_000) : call.endsAt;
 
   await db.$transaction(async (tx) => {
-    await tx.wallet.update({
-      where: { id: wallet.id },
-      data: { balance: { decrement: activity.userPays } },
-    });
-    await tx.orbeTransaction.create({
-      data: {
-        walletId: wallet.id,
-        type: "SPEND",
-        orbes: -activity.userPays,
-        copValue: activity.userPays * ORB_COP_VALUE,
-        note: `Actividad en sala ${roomId}`,
-        meta: JSON.stringify({ activityId: activity.id, kittyNet: activity.kittyNet }),
-      },
-    });
-    await tx.wallet.update({
-      where: { id: kittyWallet.id },
-      data: { balance: { increment: activity.kittyNet } },
-    });
-    await tx.orbeTransaction.create({
-      data: {
-        walletId: kittyWallet.id,
-        type: "EARN",
-        orbes: activity.kittyNet,
-        copValue: activity.kittyNet * ORB_COP_VALUE,
-        note: `Actividad aceptada · ${activity.activity}`,
-        meta: JSON.stringify({ activityId: activity.id, roomId }),
-      },
+    await chargeUserPayKitty(tx, {
+      userWalletId: wallet.id,
+      kittyUserId: call.kitty.userId,
+      split,
+      spendNote: isTime ? `+${EXTEND_MINUTES} minutos` : `Actividad en sala ${roomId}`,
+      earnNote: isTime ? `Tiempo extra · ${EXTEND_MINUTES} min` : `Actividad aceptada · ${activity.activity}`,
+      meta: { activityId: activity.id, roomId, kind: isTime ? "extend" : "activity" },
     });
     await tx.callActivity.update({ where: { id }, data: { status: "ACCEPTED", resolvedAt: new Date() } });
     await tx.orbeBurst.create({
-      data: { callId: call.id, orbes: activity.orbes, activity: activity.activity },
+      data: { callId: call.id, orbes: activity.orbes, activity: isTime ? `+${EXTEND_MINUTES} minutos` : activity.activity },
     });
+    if (isTime && endsAt) {
+      await tx.callSession.update({ where: { id: call.id }, data: { endsAt } });
+    }
   });
 
-  return NextResponse.json({ ok: true, status: "ACCEPTED", orbes: activity.orbes, activity: activity.activity });
+  return NextResponse.json({
+    ok: true,
+    status: "ACCEPTED",
+    orbes: activity.orbes,
+    activity: isTime ? `+${EXTEND_MINUTES} minutos` : activity.activity,
+    endsAt: endsAt?.toISOString() ?? null,
+  });
 }

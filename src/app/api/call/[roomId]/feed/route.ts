@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { jsonError, requireSession } from "@/lib/auth";
+import { EXTEND_MINUTES, TIME_EXTEND_MARK } from "@/lib/constants";
+import { guestLiveNow, reconcileCallByRoom, sweepStaleOccupancy } from "@/lib/occupancy";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ roomId: string }> }) {
   const ctx = await requireSession();
   if (!ctx) return jsonError("No autenticado", 401);
   const { roomId } = await params;
+  await sweepStaleOccupancy();
+  await reconcileCallByRoom(roomId, { abandon: false });
   const call = await db.callSession.findUnique({
     where: { roomId },
     include: {
@@ -61,12 +65,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ roo
     });
   }
   for (const a of call.activities) {
+    const title = a.activity === TIME_EXTEND_MARK ? `+${EXTEND_MINUTES} minutos` : a.activity;
     const label =
       a.status === "ACCEPTED"
-        ? `${call.user.displayName} propuso “${a.activity}” por ${a.orbes} orbes · ella aceptó`
+        ? `${call.user.displayName} propuso “${title}” por ${a.orbes} orbes · ella aceptó`
         : a.status === "REJECTED"
-          ? `${call.user.displayName} propuso “${a.activity}” por ${a.orbes} orbes · ella declinó`
-          : `${call.user.displayName} propone “${a.activity}” por ${a.orbes} orbes · esperando a ella`;
+          ? `${call.user.displayName} propuso “${title}” por ${a.orbes} orbes · ella declinó`
+          : `${call.user.displayName} propone “${title}” por ${a.orbes} orbes · esperando a ella`;
     events.push({
       id: a.id,
       kind: "activity",
@@ -74,7 +79,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ roo
       role: "USER",
       body: label,
       orbes: a.orbes,
-      activity: a.activity,
+      activity: title,
       status: a.status,
       at: a.createdAt.getTime(),
     });
@@ -86,10 +91,24 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ roo
   return NextResponse.json({
     events: events.slice(-80),
     pendingActivity: pending
-      ? { id: pending.id, activity: pending.activity, orbes: pending.orbes, from: call.user.displayName }
+      ? {
+          id: pending.id,
+          activity: pending.activity === TIME_EXTEND_MARK ? `+${EXTEND_MINUTES} minutos` : pending.activity,
+          orbes: pending.orbes,
+          from: call.user.displayName,
+          kind: pending.activity === TIME_EXTEND_MARK ? "time" : "activity",
+        }
       : null,
+    phase: call.phase,
+    endsAt: call.endsAt?.toISOString() ?? null,
     guest: call.guestKitty
-      ? { id: call.guestKitty.id, userId: call.guestKitty.userId, displayName: call.guestKitty.user.displayName, slug: call.guestKitty.slug }
+      ? {
+          id: call.guestKitty.id,
+          userId: call.guestKitty.userId,
+          displayName: call.guestKitty.user.displayName,
+          slug: call.guestKitty.slug,
+          live: guestLiveNow(call.guestSeenAt),
+        }
       : null,
     host: { id: call.kitty.id, userId: call.kitty.userId, displayName: call.kitty.user.displayName, slug: call.kitty.slug },
     user: { id: call.user.id, displayName: call.user.displayName },

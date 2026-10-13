@@ -1,12 +1,11 @@
 "use client";
 
-import { ACTIVITY_SUGGESTIONS, ORBE_PACKS, ORB_COP_VALUE } from "@/lib/constants";
+import { MEET_ORBES, ORB_COP_VALUE, PREVIEW_MINUTES, ROOM_MINUTES, ROOM_ORBES } from "@/lib/constants";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "./session";
 
 type Media = { id: string; type: string; webPath: string; mobilePath: string | null; desktopPath: string | null; posterPath: string | null };
-type Bonus = { id: string; percent: number; code: string; expiresAt: string };
 type Tip = { id: string; title: string; orbes: number };
 
 export function KittyProfileClient({
@@ -33,12 +32,8 @@ export function KittyProfileClient({
   const { me } = useSession();
   const router = useRouter();
   const canJoin = me?.role === "USER";
-  const [bonuses, setBonuses] = useState<Bonus[]>([]);
   const [tips, setTips] = useState<Tip[]>(kitty.tips ?? []);
   const [open, setOpen] = useState(false);
-  const [activity, setActivity] = useState(ACTIVITY_SUGGESTIONS[0]!);
-  const [orbes, setOrbes] = useState(20);
-  const [bonusId, setBonusId] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -55,36 +50,13 @@ export function KittyProfileClient({
     };
   }, [kitty.id]);
 
-  useEffect(() => {
-    if (!canJoin) {
-      setBonuses([]);
-      setBonusId("");
-      return;
-    }
-    let cancelled = false;
-    fetch(`/api/bonuses?kittyId=${encodeURIComponent(kitty.id)}`, { credentials: "include" })
-      .then((res) => (res.ok ? res.json() : { bonuses: [] }))
-      .then((data) => {
-        if (cancelled) return;
-        const next = (data.bonuses ?? []) as Bonus[];
-        setBonuses(next);
-        setBonusId(next[0]?.id ?? "");
-      })
-      .catch(() => {
-        if (!cancelled) setBonuses([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [canJoin, kitty.id]);
-
-  async function sendJoin() {
+  async function sendMeet() {
     setBusy(true);
     setMsg("");
     const res = await fetch("/api/proposals", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kittyId: kitty.id, activity, orbes, bonusId: bonusId || null }),
+      body: JSON.stringify({ kittyId: kitty.id }),
     });
     const data = await res.json();
     setBusy(false);
@@ -122,10 +94,10 @@ export function KittyProfileClient({
               </span>
             ) : kitty.isAvailable ? (
               <span className="flex items-center gap-2 text-sm text-emerald-300">
-                <span className="available-dot" /> Disponible para JOIN
+                <span className="available-dot" /> Disponible para conocerla
               </span>
             ) : (
-              <span className="text-sm text-white/50">Fuera de sala · déjale un JOIN igual</span>
+              <span className="text-sm text-white/50">Fuera de sala · igual puedes pedirle conocerte</span>
             )}
             {kitty.featured && <span className="rounded-full bg-magenta px-3 py-1 text-[10px] uppercase">Ícono de la casa</span>}
           </div>
@@ -144,15 +116,12 @@ export function KittyProfileClient({
           </div>
           {canJoin ? (
             <button className="glow-btn mt-8 px-8 py-3" onClick={() => setOpen(true)}>
-              Ofrecer JOIN a {kitty.displayName}
+              Pagar por conocer a {kitty.displayName}
             </button>
           ) : (
             <a href={me ? "/explore" : "/login"} className="glow-btn mt-8 inline-block px-8 py-3">
-              {me ? "Solo los users envían JOIN" : "Entra para ofrecer JOIN"}
+              {me ? "Solo los users pueden conocerla" : "Entra para conocerla"}
             </a>
-          )}
-          {bonuses.length > 0 && (
-            <p className="mt-4 text-sm text-magenta">Tienes un bono activo con ella: {bonuses[0]!.percent}% · {bonuses[0]!.code}</p>
           )}
         </div>
       </div>
@@ -162,7 +131,7 @@ export function KittyProfileClient({
           <p className="text-[10px] uppercase tracking-[0.35em] text-magenta">su menú</p>
           <h2 className="font-serif text-3xl">Lo que le gusta hacer · y lo que vale</h2>
           <p className="mt-2 max-w-2xl text-sm text-orchid/70">
-            Ella armó esta carta. En el privado tocas una acción y le das los orbes que pidió.
+            Si creas sala, en el privado tocas una acción y le das los orbes que pidió.
           </p>
           <div className="mt-6 grid gap-3 md:grid-cols-2">
             {tips.map((t) => (
@@ -194,43 +163,18 @@ export function KittyProfileClient({
       {open && (
         <div className="fixed inset-0 z-[90] grid place-items-center bg-black/70 p-4">
           <div className="glass max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl p-6">
-            <h3 className="font-serif text-3xl">JOIN con {kitty.displayName}</h3>
-            <p className="mt-2 text-sm text-orchid/75">Propón la actividad y cuántos orbes vale. Ella lo verá en su bandeja.</p>
-            <label className="mt-4 block text-xs uppercase tracking-widest text-white/50">Actividad</label>
-            <textarea className="input-lux mt-2 min-h-24" value={activity} onChange={(e) => setActivity(e.target.value)} />
-            <div className="mt-3 flex flex-wrap gap-2">
-              {ACTIVITY_SUGGESTIONS.map((s) => (
-                <button key={s} type="button" className="rounded-full border border-orchid/20 px-3 py-1 text-left text-[11px] hover:bg-white/10" onClick={() => setActivity(s)}>
-                  {s.slice(0, 42)}…
-                </button>
-              ))}
-            </div>
-            <label className="mt-4 block text-xs uppercase tracking-widest text-white/50">Orbes</label>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {ORBE_PACKS.map((p) => (
-                <button key={p.orbes} type="button" onClick={() => setOrbes(p.orbes)} className={`rounded-full px-4 py-2 ${orbes === p.orbes ? "bg-magenta" : "border border-orchid/30"}`}>
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <input className="input-lux mt-3" type="number" min={1} max={500} value={orbes} onChange={(e) => setOrbes(Number(e.target.value))} />
-            <p className="mt-2 text-sm text-orchid/80">
-              {orbes} orbes ≈ ${(orbes * ORB_COP_VALUE).toLocaleString("es-CO")} COP
+            <h3 className="font-serif text-3xl">Conocer a {kitty.displayName}</h3>
+            <p className="mt-2 text-sm text-orchid/75">
+              Pagas {MEET_ORBES} orbe y ella decide si te deja entrar. Son {PREVIEW_MINUTES} minutos para conocerla.
+              Si hay chispa, creas una sala de {ROOM_MINUTES} minutos por {ROOM_ORBES} orbes.
             </p>
-            {bonuses.length > 0 && (
-              <select className="input-lux mt-3" value={bonusId} onChange={(e) => setBonusId(e.target.value)}>
-                <option value="">Sin bono</option>
-                {bonuses.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.code} · {b.percent}% off
-                  </option>
-                ))}
-              </select>
-            )}
+            <p className="mt-4 text-sm text-orchid/80">
+              {MEET_ORBES} orbe ≈ ${(MEET_ORBES * ORB_COP_VALUE).toLocaleString("es-CO")} COP · se cobra cuando ella acepta
+            </p>
             {msg && <p className="mt-3 text-sm text-rose-300">{msg}</p>}
             <div className="mt-6 flex gap-3">
-              <button className="glow-btn flex-1 py-3" disabled={busy} onClick={sendJoin}>
-                Enviar JOIN
+              <button className="glow-btn flex-1 py-3" disabled={busy} onClick={() => void sendMeet()}>
+                Pedir conocerla
               </button>
               <button className="flex-1 rounded-full border border-orchid/30" onClick={() => setOpen(false)}>
                 Cancelar

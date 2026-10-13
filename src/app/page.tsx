@@ -19,7 +19,7 @@ export default async function HomePage() {
         <div className="marquee-track gap-10 text-xs uppercase tracking-[0.35em] text-orchid/80">
           {Array.from({ length: 2 }).map((_, n) => (
             <div key={n} className="flex gap-10 px-6">
-              <span>JOIN ahora · no mañana</span>
+              <span>Conócela ahora · no mañana</span>
               <span>1 orbe = $10.000</span>
               <span>AGATTA está viendo quién entra</span>
               <span>Videollamada privada · 1:1</span>
@@ -36,8 +36,8 @@ export default async function HomePage() {
             <p className="text-xs uppercase tracking-[0.4em] text-magenta">El salón</p>
             <h2 className="font-serif text-4xl md:text-5xl">Ellas no están en un catálogo. Están despiertas.</h2>
             <p className="mt-3 max-w-xl text-orchid/75">
-              Elige la cara que no puedes dejar de mirar. Ofrece una actividad. Ponle precio en orbes. Si acepta,
-              la habitación se abre. Si ignora, no insistimos: el deseo no se mendiga.
+              Elige la cara que no puedes dejar de mirar. Paga 1 orbe por conocerla unos segundos.
+              Si hay chispa, creas una sala. Si ignora, no insistimos: el deseo no se mendiga.
             </p>
           </div>
           <Link href="/explore" prefetch className="glow-btn px-6 py-3 text-sm">
@@ -70,12 +70,12 @@ export default async function HomePage() {
             d: "Cards cuadradas, foto real, pulso verde si está disponible. Esto es una red social de presencia, no un directorio muerto.",
           },
           {
-            t: "2. Ofrece el JOIN",
-            d: "Tú propones la actividad y los orbes. Ella ve la solicitud en su bandeja. Acepta o ignora. El poder está equilibrado a propósito.",
+            t: "2. Paga por conocerla",
+            d: "1 orbe. 5 minutos para conocerla. Ella acepta o ignora. Si te late, creas una sala de 10 minutos por 2 orbes.",
           },
           {
             t: "3. Entra a la habitación",
-            d: "Videollamada con cámara. En PC, chat tipo streaming a la derecha. En celular, formato transmisión. Los orbes suben como reacciones.",
+            d: "El tiempo corre a la vista. Pides ciclos de 5 minutos y ella decide. Cámara, chat y menú, sin escenario público.",
           },
         ].map((x) => (
           <article key={x.t} className="glass hover-lift rounded-3xl p-6">

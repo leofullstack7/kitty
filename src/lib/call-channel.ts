@@ -28,7 +28,9 @@ type Handlers = {
   onActivity?: (ask: ActivityAsk) => void;
   onActivityDecision?: (decision: ActivityDecision) => void;
   onGuestJoined?: (guest: { displayName: string; userId: string }) => void;
+  onGuestLeft?: (guest: { displayName?: string; userId: string; kicked?: boolean }) => void;
   onCallEnded?: () => void;
+  onPeerJoined?: (id: string) => void;
 };
 
 export type CallChannel = {
@@ -38,6 +40,7 @@ export type CallChannel = {
   sendActivity: (ask: ActivityAsk) => void;
   sendActivityDecision: (decision: ActivityDecision) => void;
   sendGuestJoined: (guest: { displayName: string; userId: string }) => void;
+  sendGuestLeft: (guest: { displayName?: string; userId: string; kicked?: boolean }) => void;
   sendCallEnded: () => void;
   disconnect: () => void;
 };
@@ -65,72 +68,96 @@ function connectSupabase(
   roomId: string,
   user: { id: string; displayName: string; role: string },
   handlers: Handlers,
-): CallChannel {
-  const channel: RealtimeChannel = sb.channel(`call:${roomId}`, {
-    config: { broadcast: { self: false }, presence: { key: user.id } },
-  });
-
-  channel
-    .on("broadcast", { event: "signal" }, ({ payload }) => {
-      if (!payload || payload.from === user.id) return;
-      if (payload.to && payload.to !== user.id) return;
-      handlers.onSignal(payload.data ?? {}, String(payload.from ?? ""));
-    })
-    .on("broadcast", { event: "chat" }, ({ payload }) => handlers.onChat(payload as ChatLine))
-    .on("broadcast", { event: "orbe-burst" }, ({ payload }) =>
-      handlers.onOrbeBurst(payload as { from: string; orbes: number; activity: string; at: number }),
-    )
-    .on("broadcast", { event: "activity" }, ({ payload }) => handlers.onActivity?.(payload as ActivityAsk))
-    .on("broadcast", { event: "activity-decision" }, ({ payload }) =>
-      handlers.onActivityDecision?.(payload as ActivityDecision),
-    )
-    .on("broadcast", { event: "guest-joined" }, ({ payload }) =>
-      handlers.onGuestJoined?.(payload as { displayName: string; userId: string }),
-    )
-    .on("broadcast", { event: "call-ended" }, () => handlers.onCallEnded?.())
-    .on("presence", { event: "sync" }, () => {
-      handlers.onPeers(Object.keys(channel.presenceState()));
-    })
-    .subscribe(async (status) => {
-      if (status === "SUBSCRIBED") {
-        await channel.track({ displayName: user.displayName, role: user.role });
-      }
+): Promise<CallChannel> {
+  return new Promise((resolve) => {
+    const channel: RealtimeChannel = sb.channel(`call:${roomId}`, {
+      config: { broadcast: { self: false }, presence: { key: user.id } },
     });
+    let settled = false;
 
-  return {
-    sendSignal: (data, to) => {
-      void channel.send({ type: "broadcast", event: "signal", payload: { from: user.id, to, data } });
-    },
-    sendChat: (body) => {
-      void channel.send({
-        type: "broadcast",
-        event: "chat",
-        payload: { from: user.displayName, role: user.role, body, at: Date.now(), kind: "chat" },
+    const api: CallChannel = {
+      sendSignal: (data, to) => {
+        void channel.send({ type: "broadcast", event: "signal", payload: { from: user.id, to, data } });
+      },
+      sendChat: (body) => {
+        void channel.send({
+          type: "broadcast",
+          event: "chat",
+          payload: { from: user.displayName, role: user.role, body, at: Date.now(), kind: "chat" },
+        });
+      },
+      sendOrbe: (orbes, activity) => {
+        void channel.send({
+          type: "broadcast",
+          event: "orbe-burst",
+          payload: { from: user.displayName, orbes, activity, at: Date.now() },
+        });
+      },
+      sendActivity: (ask) => {
+        void channel.send({ type: "broadcast", event: "activity", payload: ask });
+      },
+      sendActivityDecision: (decision) => {
+        void channel.send({ type: "broadcast", event: "activity-decision", payload: decision });
+      },
+      sendGuestJoined: (guest) => {
+        void channel.send({ type: "broadcast", event: "guest-joined", payload: guest });
+      },
+      sendGuestLeft: (guest) => {
+        void channel.send({ type: "broadcast", event: "guest-left", payload: guest });
+      },
+      sendCallEnded: () => {
+        void channel.send({ type: "broadcast", event: "call-ended", payload: { at: Date.now() } });
+      },
+      disconnect: () => {
+        void sb.removeChannel(channel);
+      },
+    };
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      resolve(api);
+    }
+
+    channel
+      .on("broadcast", { event: "signal" }, ({ payload }) => {
+        if (!payload || payload.from === user.id) return;
+        if (payload.to && payload.to !== user.id) return;
+        handlers.onSignal(payload.data ?? {}, String(payload.from ?? ""));
+      })
+      .on("broadcast", { event: "hello" }, ({ payload }) => {
+        const id = String(payload?.id ?? "");
+        if (id && id !== user.id) handlers.onPeerJoined?.(id);
+      })
+      .on("broadcast", { event: "chat" }, ({ payload }) => handlers.onChat(payload as ChatLine))
+      .on("broadcast", { event: "orbe-burst" }, ({ payload }) =>
+        handlers.onOrbeBurst(payload as { from: string; orbes: number; activity: string; at: number }),
+      )
+      .on("broadcast", { event: "activity" }, ({ payload }) => handlers.onActivity?.(payload as ActivityAsk))
+      .on("broadcast", { event: "activity-decision" }, ({ payload }) =>
+        handlers.onActivityDecision?.(payload as ActivityDecision),
+      )
+      .on("broadcast", { event: "guest-joined" }, ({ payload }) =>
+        handlers.onGuestJoined?.(payload as { displayName: string; userId: string }),
+      )
+      .on("broadcast", { event: "guest-left" }, ({ payload }) =>
+        handlers.onGuestLeft?.(payload as { displayName?: string; userId: string; kicked?: boolean }),
+      )
+      .on("broadcast", { event: "call-ended" }, () => handlers.onCallEnded?.())
+      .on("presence", { event: "sync" }, () => {
+        handlers.onPeers(Object.keys(channel.presenceState()));
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.track({ displayName: user.displayName, role: user.role });
+          void channel.send({ type: "broadcast", event: "hello", payload: { id: user.id } });
+          finish();
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") finish();
       });
-    },
-    sendOrbe: (orbes, activity) => {
-      void channel.send({
-        type: "broadcast",
-        event: "orbe-burst",
-        payload: { from: user.displayName, orbes, activity, at: Date.now() },
-      });
-    },
-    sendActivity: (ask) => {
-      void channel.send({ type: "broadcast", event: "activity", payload: ask });
-    },
-    sendActivityDecision: (decision) => {
-      void channel.send({ type: "broadcast", event: "activity-decision", payload: decision });
-    },
-    sendGuestJoined: (guest) => {
-      void channel.send({ type: "broadcast", event: "guest-joined", payload: guest });
-    },
-    sendCallEnded: () => {
-      void channel.send({ type: "broadcast", event: "call-ended", payload: { at: Date.now() } });
-    },
-    disconnect: () => {
-      void sb.removeChannel(channel);
-    },
-  };
+
+    window.setTimeout(finish, 4000);
+  });
 }
 
 function connectSocket(
@@ -148,7 +175,9 @@ function connectSocket(
     const socket: Socket = io(signalUrl, { path: "/socket.io", auth: { token: socketToken }, withCredentials: true });
     socket.on("connect", () => socket.emit("join-room", roomId));
     socket.on("room-peers", (state: { peers: string[] }) => handlers.onPeers(state.peers ?? []));
-    socket.on("peer-joined", () => undefined);
+    socket.on("peer-joined", (peer: { id?: string }) => {
+      if (peer?.id && peer.id !== user.id) handlers.onPeerJoined?.(peer.id);
+    });
     socket.on("signal", ({ from, data }: { from: string; data: SignalData }) => handlers.onSignal(data, from));
     socket.on("chat", (line: ChatLine) => handlers.onChat(line));
     socket.on("orbe-burst", (line: { from: string; orbes: number; activity: string; at: number }) =>
@@ -157,6 +186,9 @@ function connectSocket(
     socket.on("activity", (ask: ActivityAsk) => handlers.onActivity?.(ask));
     socket.on("activity-decision", (decision: ActivityDecision) => handlers.onActivityDecision?.(decision));
     socket.on("guest-joined", (guest: { displayName: string; userId: string }) => handlers.onGuestJoined?.(guest));
+    socket.on("guest-left", (guest: { displayName?: string; userId: string; kicked?: boolean }) =>
+      handlers.onGuestLeft?.(guest),
+    );
     socket.on("call-ended", () => handlers.onCallEnded?.());
     socket.once("connect_error", () => reject(new Error("No se pudo abrir el canal en vivo")));
     resolve({
@@ -166,9 +198,9 @@ function connectSocket(
       sendActivity: (ask) => socket.emit("activity", { roomId, ...ask }),
       sendActivityDecision: (decision) => socket.emit("activity-decision", { roomId, ...decision }),
       sendGuestJoined: (guest) => socket.emit("guest-joined", { roomId, ...guest }),
+      sendGuestLeft: (guest) => socket.emit("guest-left", { roomId, ...guest }),
       sendCallEnded: () => socket.emit("call-ended", { roomId }),
       disconnect: () => socket.disconnect(),
     });
-    void user;
   });
 }

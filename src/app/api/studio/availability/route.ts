@@ -14,7 +14,7 @@ export async function PATCH(req: NextRequest) {
     select: { busyRoomId: true },
   });
   if (available && kitty?.busyRoomId) {
-    return jsonError("Estás en un JOIN. Termina esa noche antes de volver a ponerte disponible.");
+    return jsonError("Estás en una noche. Termínala antes de volver a ponerte disponible.");
   }
   await db.kittyProfile.update({
     where: { id: ctx.user.kittyProfile.id },

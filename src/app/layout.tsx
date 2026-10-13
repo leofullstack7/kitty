@@ -24,7 +24,7 @@ const cormorant = Cormorant_Garamond({
 
 export const metadata: Metadata = {
   title: "KITTY — Noches privadas en vivo",
-  description: "Encuentra Kittys disponibles, ofrece un JOIN y entra a una videollamada privada. 1 orbe = $10.000 COP.",
+  description: "Encuentra Kittys disponibles, paga por conocerlas y entra a una videollamada privada. 1 orbe = $10.000 COP.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { jsonError, requireRole } from "@/lib/auth";
 import { originAllowed } from "@/lib/security";
-import { kittyIsBusy } from "@/lib/occupancy";
+import { kittyIsBusy, reconcileCallByRoom, sweepStaleOccupancy } from "@/lib/occupancy";
 
 const schema = z.object({ toKittyId: z.string().min(8) });
 
@@ -11,6 +11,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ roo
   const ctx = await requireRole(["KITTY", "ADMIN"]);
   if (!ctx) return jsonError("No autorizado", 403);
   const { roomId } = await params;
+  await sweepStaleOccupancy();
+  const occupancy = await reconcileCallByRoom(roomId, { abandon: false });
   const call = await db.callSession.findUnique({ where: { roomId }, include: { kitty: true } });
   if (!call) return jsonError("Sala no válida", 404);
   if (ctx.user.role === "KITTY" && call.kittyId !== ctx.user.kittyProfile?.id) return jsonError("Solo la anfitriona invita", 403);
@@ -27,6 +29,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ roo
 
   return NextResponse.json({
     kittys: kittys.map((k) => ({ id: k.id, slug: k.slug, displayName: k.user.displayName, avatarPath: k.avatarPath })),
+    guestId: occupancy?.guestKittyId ?? null,
   });
 }
 
@@ -38,6 +41,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return jsonError("Kitty inválida");
 
+  await sweepStaleOccupancy();
+  await reconcileCallByRoom(roomId, { abandon: false });
   const call = await db.callSession.findUnique({ where: { roomId }, include: { kitty: true, guestKitty: true } });
   if (!call || call.status === "ENDED") return jsonError("Sala no válida", 404);
   if (ctx.user.role === "KITTY" && call.kittyId !== ctx.user.kittyProfile.id) return jsonError("Solo la anfitriona invita", 403);

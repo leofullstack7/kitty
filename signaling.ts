@@ -72,6 +72,7 @@ io.on("connection", (socket) => {
 
   socket.on("join-room", (roomId: unknown) => {
     if (typeof roomId !== "string" || roomId.length > 80) return;
+    socket.data.roomId = roomId;
     socket.join(`room:${roomId}`);
     void emitRoomPeers(roomId);
     socket.to(`room:${roomId}`).emit("peer-joined", { displayName: user.displayName, role: user.role, id: user.id });
@@ -137,6 +138,15 @@ io.on("connection", (socket) => {
     });
   });
 
+  socket.on("guest-left", (payload: { roomId: string; displayName?: string; userId: string; kicked?: boolean }) => {
+    if (!payload?.roomId || !payload.userId) return;
+    io.to(`room:${payload.roomId}`).emit("guest-left", {
+      displayName: payload.displayName,
+      userId: payload.userId,
+      kicked: !!payload.kicked,
+    });
+  });
+
   socket.on("call-ended", (payload: { roomId: string }) => {
     if (!payload?.roomId) return;
     io.to(`room:${payload.roomId}`).emit("call-ended", { at: Date.now() });
@@ -144,6 +154,8 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     io.emit("presence:offline", { userId: user.id });
+    const roomId = socket.data.roomId as string | undefined;
+    if (roomId) void emitRoomPeers(roomId);
   });
 });
 

@@ -2,16 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { jsonError, requireRole } from "@/lib/auth";
-import { originAllowed, sanitizeText } from "@/lib/security";
-import { moderateText } from "@/lib/claude";
-import { splitOrbes } from "@/lib/bonuses";
-import { ORB_COP_VALUE } from "@/lib/constants";
+import { originAllowed } from "@/lib/security";
+import { BEATS } from "@/lib/call-economy";
+import { MEET_ORBES, PREVIEW_MINUTES } from "@/lib/constants";
+import { kittyIsBusy } from "@/lib/occupancy";
 
 const schema = z.object({
   kittyId: z.string().min(8),
-  activity: z.string().min(8).max(500),
-  orbes: z.number().int().min(1).max(500),
-  bonusId: z.string().nullable().optional(),
 });
 
 export async function GET() {
@@ -31,7 +28,7 @@ export async function GET() {
   return NextResponse.json({
     proposals: proposals.map((p) => ({
       id: p.id,
-      activity: p.activity,
+      activity: p.activity === "CONOCER" ? `Quiere conocerte · ${PREVIEW_MINUTES} minutos` : p.activity,
       orbes: p.orbes,
       userPays: p.userPays,
       status: p.status,
@@ -46,46 +43,31 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   if (!originAllowed(req)) return jsonError("Origen no permitido", 403);
   const ctx = await requireRole(["USER"]);
-  if (!ctx) return jsonError("Solo users envían JOIN", 403);
+  if (!ctx) return jsonError("Solo users pueden pagar por conocerla", 403);
   const body = schema.safeParse(await req.json().catch(() => null));
-  if (!body.success) return jsonError("JOIN inválido");
-  const activity = sanitizeText(body.data.activity, 500);
-  const mod = await moderateText(activity, "activity");
-  if (!mod.allowed) return jsonError("Esa actividad no está permitida");
+  if (!body.success) return jsonError("Kitty inválida");
 
   const kitty = await db.kittyProfile.findUnique({ where: { id: body.data.kittyId } });
   if (!kitty) return jsonError("Kitty no existe", 404);
-
-  let percent = 0;
-  let bonusId: string | null = null;
-  if (body.data.bonusId) {
-    const bonus = await db.bonus.findFirst({
-      where: {
-        id: body.data.bonusId,
-        userId: ctx.user.id,
-        kittyId: kitty.id,
-        status: "ACTIVE",
-        expiresAt: { gt: new Date() },
-      },
-    });
-    if (!bonus) return jsonError("Bono no válido para esta Kitty");
-    percent = bonus.percent;
-    bonusId = bonus.id;
+  if (await kittyIsBusy(kitty.id)) {
+    return jsonError("Ella está en otra noche ahora");
   }
 
-  const split = splitOrbes(body.data.orbes, percent);
-  if (!split.valid) return jsonError(split.reason ?? "Split inválido");
-
+  const split = BEATS.meet();
   const wallet = await db.wallet.findUnique({ where: { userId: ctx.user.id } });
-  if (!wallet || wallet.balance < split.userPays) return jsonError("No te alcanzan los orbes");
+  if (!wallet || wallet.balance < split.userPays) return jsonError("Necesitas 1 orbe para conocerla");
+
+  const existing = await db.proposal.findFirst({
+    where: { userId: ctx.user.id, kittyId: kitty.id, status: "PENDING" },
+  });
+  if (existing) return jsonError("Ella ya tiene tu pedido de conocerla");
 
   const proposal = await db.proposal.create({
     data: {
       userId: ctx.user.id,
       kittyId: kitty.id,
-      activity: mod.rewritten,
-      orbes: split.original,
-      bonusId,
+      activity: "CONOCER",
+      orbes: MEET_ORBES,
       userPays: split.userPays,
       platformFee: split.platformFee,
       kittyNet: split.kittyNet,
@@ -97,13 +79,12 @@ export async function POST(req: NextRequest) {
     await db.notification.create({
       data: {
         userId: kittyUser.id,
-        title: `JOIN de ${ctx.user.displayName}`,
-        body: `${split.original} orbes · ${mod.rewritten.slice(0, 80)}`,
+        title: `${ctx.user.displayName} quiere conocerte`,
+        body: `1 orbe · ${PREVIEW_MINUTES} minutos para conocerla. Si hay chispa, él puede crear sala.`,
         href: "/studio",
       },
     });
   }
 
-  void ORB_COP_VALUE;
   return NextResponse.json({ ok: true, proposalId: proposal.id, split });
 }
